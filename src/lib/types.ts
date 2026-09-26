@@ -155,6 +155,8 @@ export interface Item {
   transform: { position: Vec2; rotationZ: number; elevation?: number } | null;
   placementType: "floor" | "wall" | "stacked";
   locked?: boolean;
+  /** Chosen finish per color group ("color", or "cover"/"frame"): a retailer option name or a custom "#rrggbb". Omitted means the listed color. */
+  colorSelection?: Record<string, string>;
 }
 
 export interface Person {

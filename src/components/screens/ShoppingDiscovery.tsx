@@ -7,7 +7,8 @@ import { apiFetch } from "@/lib/api";
 import { cents } from "@/lib/calculations";
 import { evaluateCandidateFit } from "@/lib/discovery";
 import { shortlistByCategory, shortlistCategories } from "@/lib/shortlist";
-import type { Product, Project } from "@/lib/types";
+import type { Item, Product, Project } from "@/lib/types";
+import { ColorChoicePicker } from "../ColorChoicePicker";
 import { ProductPhoto } from "../ProductPhoto";
 
 interface Listing {
@@ -59,18 +60,23 @@ function productFromListing(listing: Listing): Product {
 
 type Placement = { position: { x: number; y: number }; rotationZ: number } | null;
 
-function ListingCard({ project, product, source, onAdd }: { project: Project; product: Product; source: string; onAdd: (product: Product, placement: Placement) => void }) {
+type AddHandler = (product: Product, placement: Placement, colorSelection?: Item["colorSelection"]) => void;
+
+function ListingCard({ project, product, source, onAdd }: { project: Project; product: Product; source: string; onAdd: AddHandler }) {
   const units = useUnitPreferences();
   const fit = evaluateCandidateFit(project, product);
+  const [colorSelection, setColorSelection] = useState<Item["colorSelection"]>(undefined);
   return <article className="listing-card">
     <div className="listing-image"><ProductPhoto src={product.imageURL} alt={product.name} iconSize={30} /></div>
-    <div className="listing-copy"><small>{source}</small><h3>{product.name}</h3><p>{units.formatDimensions(product.dimensions)}</p><div className={`candidate-fit ${fit.status.replaceAll("_", "-")}`}>{fit.status === "fits" ? <><Check size={13} /> Placement found</> : fit.status === "does_not_fit" ? <><AlertCircle size={13} /> No valid placement</> : <><AlertCircle size={13} /> Fit unverified</>}</div><footer><strong>{product.price ? cents(product.price.amount) : `Price on ${product.store}`}</strong><button className="secondary-button small" onClick={() => onAdd(product, fit.status === "fits" ? { position: fit.position, rotationZ: fit.rotationZ } : null)}><PackagePlus size={14} /> Add to Roominate</button></footer></div>
+    <div className="listing-copy"><small>{source}</small><h3>{product.name}</h3><p>{units.formatDimensions(product.dimensions)}</p><div className={`candidate-fit ${fit.status.replaceAll("_", "-")}`}>{fit.status === "fits" ? <><Check size={13} /> Placement found</> : fit.status === "does_not_fit" ? <><AlertCircle size={13} /> No valid placement</> : <><AlertCircle size={13} /> Fit unverified</>}</div>
+      <ColorChoicePicker product={product} selection={colorSelection} onChange={setColorSelection} compact />
+      <footer><strong>{product.price ? cents(product.price.amount) : `Price on ${product.store}`}</strong><button className="secondary-button small" onClick={() => onAdd(product, fit.status === "fits" ? { position: fit.position, rotationZ: fit.rotationZ } : null, colorSelection)}><PackagePlus size={14} /> Add to Roominate</button></footer></div>
   </article>;
 }
 
 const typeLabel = (category: string) => category.replace(/\b\w/g, (letter) => letter.toUpperCase());
 
-export function ShoppingDiscovery({ project, onAdd, onImport }: { project: Project; onAdd: (product: Product, placement: Placement) => void; onImport: () => void }) {
+export function ShoppingDiscovery({ project, onAdd, onImport }: { project: Project; onAdd: AddHandler; onImport: () => void }) {
   // Shortlist items from every store, filtered only by item type.
   const [category, setCategory] = useState("all");
   const shortlist = useMemo(() => shortlistByCategory(category), [category]);
@@ -101,7 +107,7 @@ export function ShoppingDiscovery({ project, onAdd, onImport }: { project: Proje
       </div>
       <button type="button" className="secondary-button" onClick={onImport}><Link2 size={16} /> Import from URL</button>
     </div>
-    <div className="listing-grid">{shortlist.map((product) => <ListingCard key={product.id} project={project} product={product} source={`${product.store} · shortlist`} onAdd={onAdd} />)}</div>
+    <div className="listing-grid">{shortlist.map((product) => <ListingCard key={product.id} project={project} product={product} source={product.store} onAdd={onAdd} />)}</div>
     <details className="live-search">
       <summary><Store size={15} /> Search Amazon live</summary>
       <p>Uses the official Amazon Creators API when credentials are configured. Complete dimensions are tested against the current room before receiving “placement found.”</p>

@@ -265,9 +265,27 @@ input, select { color: var(--ink); }
 .unit-toggle button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 .viewport-legend span { display: flex; align-items: center; gap: 5px; }
 .viewport-legend i { width: 9px; height: 9px; border-radius: 2px; }
-.legend-owned { background: #aaa6b3; }
+.legend-finish { background: conic-gradient(#c9a03a 0 25%, #3e5a80 0 50%, #d9cdb4 0 75%, #2a2a2a 0); }
+/* Color picker (Shop cards and the Studio inspector) */
+.color-picker { display: grid; gap: 6px; margin: 8px 0 10px; }
+.color-picker-group { display: grid; gap: 3px; }
+.color-picker-label { font-size: 11px; font-weight: 700; color: var(--muted); }
+.color-picker-label small { font-weight: 500; }
+.color-picker-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.swatch-select-button { flex: 1; min-width: 0; height: 30px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--line-strong, var(--line)); border-radius: 6px; background: var(--field, #fff); padding: 0 8px; font-size: 12px; color: var(--ink); text-align: left; cursor: pointer; }
+.swatch-select-button:hover { border-color: var(--muted); }
+.swatch-select-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* Portaled to <body>, positioned from the button's rect, so card overflow never clips it. */
+.swatch-select-list { position: fixed; z-index: 1000; margin: 0; padding: 4px; list-style: none; overflow-y: auto; background: var(--paper, #fff); border: 1px solid var(--line-strong, var(--line)); border-radius: 8px; box-shadow: 0 10px 28px rgba(20, 18, 30, .18); outline: none; }
+.swatch-select-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 5px; font-size: 12.5px; color: var(--ink); cursor: pointer; }
+.swatch-select-list li span { flex: 1; min-width: 0; }
+.swatch-select-list li.active { background: var(--bg, #efeef3); }
+.swatch-select-list li.selected { font-weight: 700; }
+.color-picker-row input[type="color"] { width: 30px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; cursor: pointer; flex: 0 0 auto; }
+.color-swatch { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .18); flex: 0 0 auto; }
+.color-picker.compact { margin: 6px 0 8px; }
+.color-picker.compact .color-picker-label { font-size: 10px; }
 /* Planned items take their owner's tone, so the key shows the first two side by side. */
-.legend-planned { background: linear-gradient(90deg, #847979 50%, #4f4b93 50%); }
 .legend-conflict { background: #d49a8c; box-shadow: 0 0 0 2px var(--danger-ink); }
 .legend-outside { background: var(--danger); }
 .scene-label span { display: block; white-space: nowrap; background: rgba(50, 46, 24, .9); color: var(--paper); font: 500 10px var(--font-mono); padding: 3px 6px; border-radius: 3px; }
@@ -428,26 +446,13 @@ input, select { color: var(--ink); }
 .segment-tabs button:hover { color: var(--ink); }
 .segment-tabs button span { background: var(--bg); border-radius: 3px; padding: 1px 6px; font: 500 10.5px var(--font-mono); color: var(--muted); }
 .segment-tabs button.active { color: var(--ink); border-bottom-color: var(--ink); }
-.catalog-panel, .cart-panel { padding: 20px; }
-.catalog-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 17px; color: var(--muted); font-size: 12px; }
+.cart-panel { padding: 20px; }
 .search-box { height: 40px; min-width: 320px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); display: flex; align-items: center; gap: 8px; background: var(--field); padding: 0 11px; }
 .search-box input { border: 0; flex: 1; min-width: 0; outline: 0; background: transparent; }
 .search-box:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
-.product-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.product-card { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--field); }
-.product-art { height: 100px; position: relative; display: grid; place-items: center; color: var(--muted); background: var(--bg); background-image: var(--drafting-grid); border-bottom: 1px solid var(--line); }
-/* Retailer photos have white backgrounds, so photo tiles drop the drafting grid and sit on white. */
-.product-art.has-photo { height: 150px; background: #fff; }
 /* Absolutely filled: percentage heights don't resolve inside the grid-centered tiles, which let tall photos overflow. */
 .product-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; padding: 8px; background: #fff; }
 .listing-image { position: relative; overflow: hidden; }
-.product-art span { position: absolute; z-index: 1; bottom: 8px; left: 9px; background: var(--paper); border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px; font: 400 10px var(--font-mono); }
-.product-card-copy { padding: 13px; }
-.product-card-copy > small { color: var(--muted); font: 400 10.5px var(--font-mono); }
-.product-card-copy h3 { font-family: var(--font-sans); font-weight: 650; letter-spacing: 0; font-size: 14px; margin: 5px 0; }
-.product-card-copy p { font-size: 11.5px; color: var(--muted); min-height: 24px; }
-.product-card-copy > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.product-card-copy strong { font: 500 14px var(--font-mono); }
 .import-grid { display: grid; grid-template-columns: minmax(300px, .75fr) minmax(400px, 1.25fr); gap: 16px; align-items: start; }
 .import-source, .draft-panel { padding: 21px; }
 .import-type-tabs { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); gap: 3px; }
@@ -732,7 +737,6 @@ input, select { color: var(--ink); }
 @media (max-width: 1180px) {
   .studio-layout { grid-template-columns: 210px minmax(380px, 1fr) 256px; }
   .viewport-legend { bottom: 50px; max-width: calc(100% - 22px); }
-  .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .proposal-grid { grid-template-columns: 1fr; }
   .proposal-preview { min-height: 480px; }
   .proposal-canvas { height: 420px; }
@@ -794,7 +798,7 @@ input, select { color: var(--ink); }
   .view-badge { font-size: 11px; }
   .viewport-legend { bottom: 50px; left: 7px; max-width: calc(100% - 14px); }
   .grid-scale { bottom: 7px; right: 7px; }
-  .viewport-legend span:nth-child(-n+4) { display: none; }
+  .viewport-legend span:nth-child(-n+3) { display: none; }
   .home-page { padding: 0 16px 40px; }
   .home-header { height: 64px; }
   .home-header-note { display: none; }
@@ -826,10 +830,8 @@ input, select { color: var(--ink); }
   .scan-camera { aspect-ratio: 3 / 4; max-height: 58dvh; }
   .scan-reference > div:not(.scan-reference-icon):not(.warning-note):not(.scan-actions) { grid-template-columns: 1fr; }
   .scan-actions button { flex: 1; padding: 0 8px; }
-  .product-grid { grid-template-columns: 1fr; }
-  .catalog-panel, .cart-panel, .import-source, .draft-panel { padding: 14px; }
+  .cart-panel, .import-source, .draft-panel { padding: 14px; }
   .search-box { min-width: 0; flex: 1; }
-  .catalog-toolbar > span { display: none; }
   .form-grid, .form-grid.three { grid-template-columns: 1fr; }
   .form-grid .span-2 { grid-column: auto; }
   .empty-draft { min-height: 280px; }
