@@ -1,10 +1,11 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { AlertCircle, Box, Check, ExternalLink, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Trash2, Upload } from "lucide-react";
+import { AlertCircle, Box, Check, Download, ExternalLink, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Trash2, Upload } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { apiFetch } from "@/lib/api";
 import { cents, productFor } from "@/lib/calculations";
+import { downloadShoppingList } from "@/lib/shoppingList";
 import type { Evidence, Issue, Product, Project } from "@/lib/types";
 import { LengthInput } from "../LengthInput";
 
@@ -199,7 +200,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       </div>}
 
       {tab === "cart" && <section className="panel-surface cart-panel">
-        <div className="panel-heading"><div><p className="eyebrow">Shared group cart</p><h2>Who’s bringing what</h2></div><span className="source-chip confirmed">{project.people.length} collaborators</span></div>
+        <div className="panel-heading"><div><p className="eyebrow">Shared group cart</p><h2>Who’s bringing what</h2></div><div className="panel-heading-actions"><span className="source-chip confirmed">{project.people.length} collaborators</span><button className="secondary-button small" disabled={!cartItems.length} onClick={() => downloadShoppingList(project)}><Download size={14} /> Export shopping list</button></div></div>
         <div className="cart-table">
           <div className="cart-table-head"><span>Item</span><span>Buyer</span><span>Fit</span><span>Price</span><span /></div>
           {cartItems.map((item) => {
