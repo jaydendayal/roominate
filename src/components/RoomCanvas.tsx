@@ -339,15 +339,19 @@ function FurnitureItem({
           </lineSegments>
         )}
       </group>
-      {(selected || conflict) && <Text
-        position={[0, 0, dimensions.height / 2 + 0.12]}
-        fontSize={0.09}
-        color="#f4f3f7"
-        outlineColor="#322e18"
-        outlineWidth={0.008}
-        anchorX="center"
-        maxWidth={1.5}
-      >{conflict ? `! ${product.name}` : product.name}</Text>}
+      {/* Billboard keeps the label facing the camera at any orbit angle, even when the item itself is rotated. */}
+      {(selected || conflict) && <Billboard position={[0, 0, dimensions.height / 2 + 0.12]}>
+        <Text
+          fontSize={0.09}
+          color="#f4f3f7"
+          outlineColor="#322e18"
+          outlineWidth={0.008}
+          anchorX="center"
+          anchorY="bottom"
+          maxWidth={1.5}
+          textAlign="center"
+        >{`${conflict ? "⚠ " : ""}${item.locked ? "🔒 " : ""}${product.name}`}</Text>
+      </Billboard>}
       {selected && elevation > FLOOR_SNAP / 4 && (
         <group position={[0, 0, -itemHeight / 2 - elevation / 2]} rotation={[Math.PI / 2, 0, 0]}>
           <mesh><cylinderGeometry args={[0.006, 0.006, elevation, 8]} /><meshBasicMaterial color={HANDLE_COLOR} transparent opacity={0.7} /></mesh>

@@ -214,7 +214,21 @@ input, select { color: var(--ink); }
 .proposal-blockers strong { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink); }
 .proposal-blockers ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
 .item-stack { display: grid; gap: 4px; overflow: auto; margin-bottom: 12px; }
-.room-item-row { width: 100%; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; padding: 7px; display: flex; align-items: center; gap: 9px; text-align: left; }
+.room-item-row { width: 100%; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; padding: 7px 4px 7px 7px; display: flex; align-items: center; gap: 4px; text-align: left; }
+.room-item-select { flex: 1; min-width: 0; border: 0; background: transparent; padding: 0; display: flex; align-items: center; gap: 9px; text-align: left; }
+.lock-button { width: 30px; height: 30px; color: var(--line-strong); }
+.lock-button.on { color: var(--ok-ink); background: var(--ok-soft); }
+/* Fixed height and single-line text so the toggle is the same size locked and unlocked. */
+.lock-toggle { width: 100%; height: 52px; margin: 12px 0 2px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--field); padding: 0 10px; display: flex; align-items: center; gap: 9px; text-align: left; color: var(--ink); overflow: hidden; }
+.lock-toggle svg { flex: 0 0 auto; }
+.lock-toggle strong, .lock-toggle small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lock-button { flex: 0 0 30px; }
+.lock-toggle:hover { background: var(--bg); }
+.lock-toggle.on { border-color: var(--ok); background: var(--ok-soft); color: var(--ok-ink); }
+.lock-toggle > span { display: flex; flex-direction: column; min-width: 0; }
+.lock-toggle strong { font-size: 12px; }
+.lock-toggle small { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.coordinate-grid input:disabled { background: var(--bg); color: var(--muted); cursor: not-allowed; }
 .room-item-row:hover { background: var(--bg); }
 .room-item-row.selected { border-color: var(--ink); background: var(--accent-soft); }
 .object-thumb { width: 34px; height: 34px; border-radius: var(--radius-sm); display: grid; place-items: center; color: var(--paper); }
