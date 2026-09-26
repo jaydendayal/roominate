@@ -39,8 +39,120 @@ export function itemBounds(project: Project, item: Item): Bounds | null {
   };
 }
 
+export function itemElevation(item: Item) {
+  return item.transform?.elevation ?? 0;
+}
+
 function overlap(a: Bounds, b: Bounds, epsilon = 0.015) {
   return a.minX < b.maxX - epsilon && a.maxX > b.minX + epsilon && a.minZ < b.maxZ - epsilon && a.maxZ > b.minZ + epsilon;
+}
+
+const VERTICAL_EPSILON = 0.005;
+
+function verticalOverlap(aBottom: number, aTop: number, bBottom: number, bTop: number) {
+  return aBottom < bTop - VERTICAL_EPSILON && aTop > bBottom + VERTICAL_EPSILON;
+}
+
+interface ItemBox extends Bounds {
+  bottom: number;
+  top: number;
+}
+
+function itemBox(project: Project, item: Item): ItemBox | null {
+  const bounds = itemBounds(project, item);
+  const height = productFor(project, item)?.dimensions.height;
+  if (!bounds || height == null) return null;
+  const bottom = itemElevation(item);
+  return { ...bounds, bottom, top: bottom + height };
+}
+
+/** True when any part of the item's collision box pokes through a wall, the floor, or the ceiling. */
+export function itemExceedsRoom(project: Project, item: Item) {
+  const box = itemBox(project, item);
+  if (!box) return false;
+  const { width, length, height } = project.room;
+  return box.minX < 0 || box.maxX > width || box.minZ < 0 || box.maxZ > length
+    || box.bottom < -VERTICAL_EPSILON || box.top > height + VERTICAL_EPSILON;
+}
+
+/** Ids of other placed items whose collision boxes intersect `item` (footprint only when `footprintOnly`). */
+export function collidingItemIds(project: Project, item: Item, footprintOnly = false) {
+  const box = itemBox(project, item);
+  if (!box) return [];
+  return project.items
+    .filter((other) => other.id !== item.id && other.purchaseStatus !== "deferred")
+    .filter((other) => {
+      const otherBox = itemBox(project, other);
+      return otherBox != null && overlap(box, otherBox) && (footprintOnly || verticalOverlap(box.bottom, box.top, otherBox.bottom, otherBox.top));
+    })
+    .map((other) => other.id);
+}
+
+/** True when the item sits on the floor or on top of another item rather than floating or sinking. */
+export function restsOnSurface(project: Project, item: Item) {
+  const elevation = itemElevation(item);
+  if (Math.abs(elevation) <= VERTICAL_EPSILON) return true;
+  return collidingItemIds(project, item, true).some((id) => {
+    const other = project.items.find((candidate) => candidate.id === id);
+    const otherBox = other ? itemBox(project, other) : null;
+    return otherBox != null && Math.abs(otherBox.top - elevation) <= VERTICAL_EPSILON;
+  });
+}
+
+/** True when some other placed item sits under the item's footprint, at or below its base (resting on it or hovering over it). */
+export function isAboveItem(project: Project, item: Item, ignoreIds: ReadonlySet<string> = new Set()) {
+  const box = itemBox(project, item);
+  if (!box) return false;
+  return collidingItemIds(project, item, true).some((id) => {
+    if (ignoreIds.has(id)) return false;
+    const other = project.items.find((candidate) => candidate.id === id);
+    const otherBox = other ? itemBox(project, other) : null;
+    return otherBox != null && otherBox.top <= box.bottom + VERTICAL_EPSILON;
+  });
+}
+
+/** True when moving the item to `position` carries it off the top of another item and out over open floor. */
+export function leavesSurface(project: Project, item: Item, position: Vec2, ignoreIds: ReadonlySet<string> = new Set()) {
+  if (!item.transform || !isAboveItem(project, item, ignoreIds)) return false;
+  return !isAboveItem(project, { ...item, transform: { ...item.transform, position } }, ignoreIds);
+}
+
+/**
+ * Lowest elevation at or above `desired` where the item no longer intersects other placed items,
+ * so an item moved into another one ends up resting on top of it instead of inside it.
+ */
+export function stackedElevation(project: Project, item: Item, desired: number, ignoreIds: ReadonlySet<string> = new Set()) {
+  const candidate: Item = item.transform ? { ...item, transform: { ...item.transform, elevation: desired } } : item;
+  const box = itemBox(project, candidate);
+  if (!box) return desired;
+  const height = box.top - box.bottom;
+  // Sorted by bottom, a single upward pass settles on the first free gap: once an obstacle is
+  // entirely above the item, raising past a later obstacle (with a higher bottom) never happens.
+  const obstacles = collidingItemIds(project, candidate, true)
+    .filter((id) => !ignoreIds.has(id))
+    .map((id) => itemBox(project, project.items.find((other) => other.id === id)!))
+    .filter((other): other is ItemBox => other != null)
+    .sort((a, b) => a.bottom - b.bottom);
+  let elevation = desired;
+  for (const obstacle of obstacles) {
+    if (verticalOverlap(elevation, elevation + height, obstacle.bottom, obstacle.top)) elevation = obstacle.top;
+  }
+  return elevation;
+}
+
+/**
+ * Elevation for an item moved horizontally to `position`. Items resting on the floor or another item follow
+ * surfaces, items carried off the top of another item drop back to the floor, and items moved into another
+ * item end up on top of it. Only items floating over open floor keep their height. Items already intersecting
+ * the moved item are ignored while their footprints still overlap, so existing collisions don't make it jump.
+ */
+export function settledElevation(project: Project, item: Item, position: Vec2) {
+  if (!item.transform) return 0;
+  const moved: Item = { ...item, transform: { ...item.transform, position } };
+  const stillOverlapping = new Set(collidingItemIds(project, moved, true));
+  const ignored = new Set(collidingItemIds(project, item).filter((id) => stillOverlapping.has(id)));
+  const followsSurface = restsOnSurface(project, item) || leavesSurface(project, item, position, ignored);
+  return stackedElevation(project, moved, followsSurface ? 0 : itemElevation(item), ignored);
 }
 
 function zoneBounds(position: Vec2, width: number, depth: number): Bounds {
@@ -126,7 +238,22 @@ export function calculateIssues(project: Project): Issue[] {
           status: "open",
         });
       }
-      if (product.dimensions.height != null && product.dimensions.height > project.room.height) {
+      const elevation = itemElevation(item);
+      if (elevation < -VERTICAL_EPSILON) {
+        issues.push({
+          id: `floor-${item.id}`,
+          type: "fit",
+          severity: "error",
+          confidence: "confirmed",
+          affectedItemIds: [item.id],
+          affectedGeometryIds: [project.room.id],
+          message: `${product.name} sinks below the floor`,
+          detail: `Its base sits ${Math.abs(elevation).toFixed(2)} m under the floor.`,
+          suggestedActions: ["Raise item"],
+          status: "open",
+        });
+      }
+      if (product.dimensions.height != null && elevation + product.dimensions.height > project.room.height + VERTICAL_EPSILON) {
         issues.push({
           id: `ceiling-${item.id}`,
           type: "fit",
@@ -135,8 +262,10 @@ export function calculateIssues(project: Project): Issue[] {
           affectedItemIds: [item.id],
           affectedGeometryIds: [project.room.id],
           message: `${product.name} exceeds ceiling height`,
-          detail: `${product.dimensions.height.toFixed(2)} m item vs ${project.room.height.toFixed(2)} m room.`,
-          suggestedActions: ["Choose a shorter item"],
+          detail: elevation > VERTICAL_EPSILON
+            ? `Its top reaches ${(elevation + product.dimensions.height).toFixed(2)} m vs a ${project.room.height.toFixed(2)} m ceiling.`
+            : `${product.dimensions.height.toFixed(2)} m item vs ${project.room.height.toFixed(2)} m room.`,
+          suggestedActions: elevation > VERTICAL_EPSILON ? ["Lower item", "Choose a shorter item"] : ["Choose a shorter item"],
           status: "open",
         });
       }
@@ -165,7 +294,11 @@ export function calculateIssues(project: Project): Issue[] {
       const b = activeItems[j];
       const aBounds = itemBounds(project, a);
       const bBounds = itemBounds(project, b);
-      if (aBounds && bBounds && overlap(aBounds, bBounds)) {
+      const aBox = itemBox(project, a);
+      const bBox = itemBox(project, b);
+      // Without a known height, stay conservative and treat overlapping footprints as a collision.
+      const stackedClear = aBox != null && bBox != null && !verticalOverlap(aBox.bottom, aBox.top, bBox.bottom, bBox.top);
+      if (aBounds && bBounds && overlap(aBounds, bBounds) && !stackedClear) {
         issues.push({
           id: `overlap-${[a.id, b.id].sort().join("-")}`,
           type: "fit",
