@@ -1,4 +1,4 @@
-import { Camera, DoorOpen, Grid2x2, Package, Pin, ShoppingBag, StickyNote, type LucideIcon } from "lucide-react";
+import { BedDouble, Camera, DoorOpen, Grid2x2, Package, Pin, ShoppingBag, StickyNote, type LucideIcon } from "lucide-react";
 
 export type Screen = "capture" | "studio" | "products" | "constraints" | "issues" | "better";
 
@@ -24,3 +24,6 @@ export const workspaceTabs: WorkspaceTab[] = [
 
 /** The door in the homepage model opens the invite dialog rather than a tab. */
 export const shareTarget = { label: "Share", object: "Door", summary: "Invite roommates to view or edit", icon: DoorOpen };
+
+/** The bed in the homepage model leads to the index of every room plan in this browser. */
+export const roomsTarget = { label: "Your rooms", object: "Bed", summary: "Switch to another room plan, or start a new one", icon: BedDouble };

@@ -7,6 +7,7 @@ import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/cal
 import { snapItemPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
 import { LengthInput } from "../LengthInput";
+import { personTone } from "../personTones";
 import { RoomCanvas } from "../RoomCanvas";
 
 export function StudioPanel({
@@ -91,12 +92,13 @@ export function StudioPanel({
           {project.items.filter((item) => item.purchaseStatus !== "deferred").map((item) => {
             const product = productFor(project, item);
             const owner = project.people.find((person) => person.id === item.ownerId);
+            const tone = personTone(project, item.ownerId);
             const hasIssue = issues.some((issue) => issue.affectedItemIds.includes(item.id));
             const name = product?.name ?? "Unknown item";
             return (
               <div className={`room-item-row ${selectedId === item.id ? "selected" : ""}`} key={item.id}>
                 <button className="room-item-select" onClick={() => setSelectedId(item.id)}>
-                  <span className="object-thumb" style={{ background: owner?.color }}><Box size={18} /></span>
+                  <span className="object-thumb" style={{ background: tone.fill, color: tone.mark }}><Box size={18} /></span>
                   <span className="item-row-copy"><strong>{name}</strong><small>{owner?.name} · {item.transform ? "placed" : "fit unverified"}{item.locked ? " · locked" : ""}</small></span>
                   {hasIssue && <AlertTriangle size={16} className="warn-text" />}
                 </button>

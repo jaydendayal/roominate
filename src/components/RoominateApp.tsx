@@ -15,7 +15,8 @@ import { BetterCartPanel } from "./screens/BetterCartPanel";
 import { InviteDialog, JoinInvite } from "./Collaboration";
 import { Brand, BrandMark } from "./Brand";
 import { HomePage } from "./HomePage";
-import type { DioramaTarget } from "./HomeDiorama";
+import { personTone } from "./personTones";
+import type { ProjectTarget } from "./HomeDiorama";
 import { workspaceTabs, type Screen } from "./workspaceTabs";
 
 const CURRENT_PROJECT_KEY = "roominate.currentProject";
@@ -77,7 +78,7 @@ function RoominateWorkspace() {
   };
 
   /** Opens a project on the tab its model object stands for; the door opens sharing over the 3D Studio. */
-  const openProject = (id: string, target: DioramaTarget = "studio") => {
+  const openProject = (id: string, target: ProjectTarget = "studio") => {
     chooseCurrent(id);
     setActiveId(id);
     setScreen(target === "share" ? "studio" : target);
@@ -156,7 +157,10 @@ function RoominateWorkspace() {
           {undoProject && <button className="secondary-button compact-button" onClick={() => { update(() => undoProject); setUndoProject(null); }}><RotateCcw size={15} /> Undo</button>}
           <button className="secondary-button compact-button" onClick={() => setInviteOpen(true)}><Share2 size={15} /><span className="desktop-only">Share</span></button>
           <div className="avatars" aria-label="Collaborators">
-            {activeProject.people.map((person) => <span key={person.id} style={{ background: person.color }} title={person.name}>{person.name[0]}</span>)}
+            {activeProject.people.map((person) => {
+              const tone = personTone(activeProject, person.id);
+              return <span key={person.id} style={{ background: tone.fill, color: tone.mark }} title={person.name}>{person.name[0]}</span>;
+            })}
           </div>
         </div>
       </header>

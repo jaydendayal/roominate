@@ -145,6 +145,7 @@ export interface Item {
 export interface Person {
   id: string;
   name: string;
+  /** Kept for saved projects and the invite API; the UI colours people with `personTone` instead. */
   color: string;
 }
 

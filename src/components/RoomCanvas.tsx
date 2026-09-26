@@ -12,6 +12,7 @@ import { snapItemPosition, stepPosition } from "@/lib/snap";
 import type { Issue, Item, Project, RoomFeature, Vec2 } from "@/lib/types";
 import { gridOptions } from "@/lib/units";
 import { FurnitureModel } from "./FurnitureModel";
+import { personTone } from "./personTones";
 
 interface RoomCanvasProps {
   project: Project;
@@ -24,20 +25,67 @@ interface RoomCanvasProps {
   compact?: boolean;
 }
 
-function CameraRig({ project, command, controlsRef }: { project: Project; command?: RoomCanvasProps["viewCommand"]; controlsRef: React.RefObject<OrbitControlsImpl | null> }) {
-  const { camera } = useThree();
+const MIN_VIEW_DISTANCE = 2;
+const MAX_VIEW_DISTANCE = 12;
+const VIEW_ELEVATION = THREE.MathUtils.degToRad(30);
+// +X is east and -Y is south, so the default view looks in diagonally over the south-east corner, the one the cutaway opens.
+const DEFAULT_VIEW_DIRECTION = new THREE.Vector3(Math.SQRT1_2 * Math.cos(VIEW_ELEVATION), -Math.SQRT1_2 * Math.cos(VIEW_ELEVATION), Math.sin(VIEW_ELEVATION));
+// Screen-space bounds the room must fit inside, in normalized device coordinates, clear of the toolbar above and the legends below.
+const VIEW_SAFE_AREA = { x: 0.88, bottom: -0.74, top: 0.82 };
+
+/** Backs the camera out from `target` along `direction` until every point is on screen inside the safe area. */
+function fitCameraTo(camera: THREE.PerspectiveCamera, target: THREE.Vector3, direction: THREE.Vector3, points: THREE.Vector3[]) {
+  const projected = new THREE.Vector3();
+  const fits = (distance: number) => {
+    camera.position.copy(target).addScaledVector(direction, distance);
+    camera.lookAt(target);
+    camera.updateMatrixWorld();
+    return points.every((point) => {
+      projected.copy(point).project(camera);
+      // z beyond 1 means the point is behind the camera, where x and y are meaningless.
+      return projected.z < 1 && Math.abs(projected.x) <= VIEW_SAFE_AREA.x && projected.y >= VIEW_SAFE_AREA.bottom && projected.y <= VIEW_SAFE_AREA.top;
+    });
+  };
+  let near = MIN_VIEW_DISTANCE;
+  let far = MAX_VIEW_DISTANCE;
+  for (let step = 0; step < 20; step += 1) {
+    const middle = (near + far) / 2;
+    if (fits(middle)) far = middle;
+    else near = middle;
+  }
+  fits(far);
+}
+
+function CameraRig({ project, command, cutaway, controlsRef }: { project: Project; command?: RoomCanvasProps["viewCommand"]; cutaway?: boolean; controlsRef: React.RefObject<OrbitControlsImpl | null> }) {
+  const camera = useThree((state) => state.camera);
+  // Read when a view is applied, but toggling the cutaway or resizing shouldn't move a camera the user has placed.
+  const cutawayNow = useRef(cutaway);
   useEffect(() => {
-    camera.up.set(0, 0, 1);
-    const center = new THREE.Vector3(project.room.width / 2, project.room.length / 2, 0.6);
-    if (command?.type === "overhead") {
-      camera.position.set(project.room.width / 2, project.room.length / 2 + 0.001, Math.max(5.5, project.room.length * 1.8));
-    } else {
-      camera.position.set(project.room.width * 1.45, project.room.length * 1.55, Math.max(3.4, project.room.height * 1.4));
+    cutawayNow.current = cutaway;
+  }, [cutaway]);
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (controls) {
+      // One undamped update spends the momentum left from the last drag, which would otherwise carry the camera off the new view.
+      const damping = controls.enableDamping;
+      controls.enableDamping = false;
+      controls.update();
+      controls.enableDamping = damping;
     }
-    camera.lookAt(center);
-    if (controlsRef.current) {
-      controlsRef.current.target.copy(center);
-      controlsRef.current.update();
+    camera.up.set(0, 0, 1);
+    const { width, length, height } = project.room;
+    const center = new THREE.Vector3(width / 2, length / 2, 0.6);
+    if (command?.type === "overhead") {
+      camera.position.set(width / 2, length / 2 + 0.001, Math.max(5.5, length * 1.8));
+      camera.lookAt(center);
+    } else if (camera instanceof THREE.PerspectiveCamera) {
+      // Frame the floor and the top of every wall that's drawn; the cutaway leaves the near top corner empty.
+      const corners = [[0, 0], [width, 0], [0, length], [width, length]].flatMap(([x, y]) => [new THREE.Vector3(x, y, 0), new THREE.Vector3(x, y, height)]);
+      fitCameraTo(camera, center, DEFAULT_VIEW_DIRECTION, cutawayNow.current ? corners.filter((corner) => !(corner.x === width && corner.y === 0 && corner.z === height)) : corners);
+    }
+    if (controls) {
+      controls.target.copy(center);
+      controls.update();
     }
   }, [camera, command, controlsRef, project.room.height, project.room.length, project.room.width]);
   return null;
@@ -126,7 +174,18 @@ function roomClipPlanes(width: number, length: number, height: number): RoomClip
   return { inside, outside: inside.map((plane) => plane.clone().negate()) };
 }
 
-const OUT_OF_ROOM_RED = "#b8321f";
+// Issue colours match the homepage model: the blocking sticky notes on its mirror, and the palette's danger red.
+const CONFLICT_TINT = "#d49a8c";
+const OUT_OF_ROOM_RED = "#a3402f";
+// The room shell is drawn in the homepage model's card tones; the captured palette only tints it.
+const WALL_TONE = "#dedbe4";
+const FLOOR_TONE = "#c6c0c6";
+const CAPTURED_TINT = 0.3;
+
+/** A shell tone shifted a little toward the colour captured for that surface, so the room stays in the drafting palette. */
+function tintedTone(base: string, captured: string | undefined) {
+  return captured ? `#${new THREE.Color(base).lerp(new THREE.Color(captured), CAPTURED_TINT).getHexString()}` : base;
+}
 const HANDLE_COLOR = "#322e18";
 const FLOOR_SNAP = 0.04;
 
@@ -223,7 +282,6 @@ function FurnitureItem({
   const dimensions = product?.dimensions;
   const activePointer = useRef<number | null>(null);
   const [liftingActive, setLiftingActive] = useState(false);
-  const owner = project.people.find((person) => person.id === item.ownerId);
   if (!product || !position || dimensions?.width == null || dimensions.depth == null || dimensions.height == null) return null;
   const itemHeight = dimensions.height;
 
@@ -232,7 +290,7 @@ function FurnitureItem({
   const tintConflict = exceedsRoom
     ? issues.some((issue) => issue.severity === "error" && issue.affectedItemIds.includes(item.id) && !issue.affectedGeometryIds.includes(project.room.id))
     : conflict;
-  const color = selected ? "#b7b5e4" : tintConflict ? "#c46a58" : item.acquisitionStatus === "owned" ? "#aaa6b3" : owner?.color ?? "#847979";
+  const color = selected ? "#b7b5e4" : tintConflict ? CONFLICT_TINT : item.acquisitionStatus === "owned" ? "#aaa6b3" : personTone(project, item.ownerId).fill;
   const modelProps = { category: product.category, name: product.name, dimensions: { width: dimensions.width, depth: dimensions.depth, height: dimensions.height }, profile: product.visualProfile };
 
   // Follows one pointer until release (commit) or cancel, then reports back once.
@@ -453,8 +511,8 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
     const position = savedItem(itemId)?.transform?.position;
     if (position && elevation != null) onMoveItem?.(itemId, position, elevation);
   };
-  const wallColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex ?? "#dedbe4";
-  const floorColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("floor"))?.hex ?? "#a89d9b";
+  const wallColor = tintedTone(WALL_TONE, project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex);
+  const floorColor = tintedTone(FLOOR_TONE, project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("floor"))?.hex);
   const center = useMemo(() => new THREE.Vector3(project.room.width / 2, project.room.length / 2, 0.55), [project.room.length, project.room.width]);
   const clipPlanes = useMemo(() => roomClipPlanes(project.room.width, project.room.length, project.room.height), [project.room.height, project.room.length, project.room.width]);
 
@@ -464,8 +522,8 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
       <fog attach="fog" args={["#dcdae2", 8, 16]} />
       <ambientLight intensity={1.8} />
       <directionalLight position={[2, 5, 7]} intensity={2.5} castShadow shadow-mapSize={[1024, 1024]} />
-      <CameraRig project={project} command={viewCommand} controlsRef={controls} />
-      <OrbitControls ref={controls} enabled={!dragging} makeDefault target={center} minDistance={2} maxDistance={12} maxPolarAngle={Math.PI / 2.02} />
+      <CameraRig project={project} command={viewCommand} cutaway={cutaway} controlsRef={controls} />
+      <OrbitControls ref={controls} enabled={!dragging} makeDefault target={center} minDistance={MIN_VIEW_DISTANCE} maxDistance={MAX_VIEW_DISTANCE} maxPolarAngle={Math.PI / 2.02} />
       <mesh position={[project.room.width / 2, project.room.length / 2, -0.025]} receiveShadow onPointerDown={() => onSelectItem?.("")}>
         <boxGeometry args={[project.room.width, project.room.length, 0.05]} />
         <meshStandardMaterial color={floorColor} roughness={0.92} />
@@ -492,7 +550,7 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
         <group key={zone.id} position={[zone.position.x, zone.position.y, 0.012]}>
           <mesh>
             <planeGeometry args={[zone.width, zone.depth]} />
-            <meshBasicMaterial color="#c46a58" transparent opacity={0.26} side={THREE.DoubleSide} />
+            <meshBasicMaterial color={CONFLICT_TINT} transparent opacity={0.34} side={THREE.DoubleSide} />
           </mesh>
           <Text position={[0, 0, 0.02]} fontSize={0.12} color="#7d2e21" anchorX="center">KEEP CLEAR</Text>
         </group>

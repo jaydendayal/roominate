@@ -1,14 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AlertTriangle, CircleDollarSign, Copy, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { calculateIssues, cents, featureWall, itemHasConflict, productFor, purchaseSubtotal } from "@/lib/calculations";
 import type { Issue, Project } from "@/lib/types";
 import { Brand } from "./Brand";
-import type { DioramaTarget } from "./HomeDiorama";
-import { shareTarget, workspaceTabs, type Screen } from "./workspaceTabs";
+import type { DioramaTarget, ProjectTarget } from "./HomeDiorama";
+import { roomsTarget, shareTarget, workspaceTabs } from "./workspaceTabs";
 
 const HomeDiorama = dynamic(() => import("./HomeDiorama"), {
   ssr: false,
@@ -56,7 +56,7 @@ interface HomePageProps {
   projects: Project[];
   current: Project;
   onChooseCurrent: (id: string) => void;
-  onOpen: (id: string, target?: DioramaTarget) => void;
+  onOpen: (id: string, target?: ProjectTarget) => void;
   onCreate: () => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
@@ -68,92 +68,85 @@ export function HomePage({ projects, current, onChooseCurrent, onOpen, onCreate,
   const units = useUnitPreferences();
   const [active, setActive] = useState<DioramaTarget | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const roomsSection = useRef<HTMLElement>(null);
+  const roomsHeading = useRef<HTMLHeadingElement>(null);
   const issuesByProject = useMemo(() => new Map(projects.map((project) => [project.id, calculateIssues(project)])), [projects]);
   const issues = issuesByProject.get(current.id) ?? [];
   const blocking = issues.filter((issue) => issue.severity === "error").length;
-  const subtotal = purchaseSubtotal(current);
-  const over = subtotal.amount - current.budgetAmount;
-  const { room } = current;
-  const roomSize = `${units.formatLength(room.width)} × ${units.formatLength(room.length)}`;
+  const over = purchaseSubtotal(current).amount - current.budgetAmount;
+  const roomSize = `${units.formatLength(current.room.width)} × ${units.formatLength(current.room.length)}`;
 
-  const status: Record<Screen, string> = {
+  const status: Record<DioramaTarget, string> = {
     capture: roomSize,
     studio: `${current.items.filter((item) => item.transform).length} of ${current.items.length} placed`,
     products: `${current.items.filter((item) => item.purchaseStatus === "in_cart").length} in cart`,
     constraints: `${cents(current.budgetAmount)} budget`,
     issues: issues.length ? `${issues.length} open` : "all clear",
     better: current.proposal ? "proposal ready" : over > 0 ? `${cents(over)} over` : "within budget",
+    share: `${current.people.length} ${current.people.length === 1 ? "person" : "people"}`,
+    rooms: `${projects.length} ${projects.length === 1 ? "room" : "rooms"}`,
   };
-
-  const legendRow = (target: DioramaTarget) => ({
-    type: "button" as const,
-    className: active === target ? "active" : undefined,
-    onMouseEnter: () => setActive(target),
-    onMouseLeave: () => setActive(null),
-    onFocus: () => setActive(target),
-    onBlur: () => setActive(null),
-    onClick: () => onOpen(current.id, target),
-  });
   const ShareIcon = shareTarget.icon;
+  const RoomsIcon = roomsTarget.icon;
+
+  const selectTarget = (target: DioramaTarget) => {
+    if (target !== "rooms") return onOpen(current.id, target);
+    roomsSection.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    roomsHeading.current?.focus({ preventScroll: true });
+  };
 
   return (
     <main className="home-page">
       <header className="home-header">
         <Brand />
-        <span className="home-header-note">Projects are saved in this browser</span>
+        <div className="home-header-meta">
+          <span className="home-header-note">Projects are saved in this browser</span>
+          <a href="#rooms">Your rooms · {projects.length}</a>
+        </div>
       </header>
 
+      {/* The model is the whole first screen. Its callouts are the navigation, and their cards carry the numbers. */}
       <section className="home-stage" aria-labelledby="home-title">
-        <div className="stage-copy">
-          {projects.length > 1 ? (
-            <label className="room-switch">
-              <span>Now planning</span>
-              <select value={current.id} onChange={(event) => onChooseCurrent(event.target.value)}>
-                {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-              </select>
-            </label>
-          ) : <p className="eyebrow">Now planning</p>}
-          <h1 id="home-title">{current.name}</h1>
-          <p className="stage-lede">Every part of the plan has a place in this room. Pick an object to open it.</p>
-          <ol className="stage-legend">
-            {workspaceTabs.map((tab) => (
-              <li key={tab.id}>
-                <button {...legendRow(tab.id)}>
-                  <b>{tab.index}</b>
-                  <span><strong>{tab.label}</strong><small>{tab.object} · {tab.summary}</small></span>
-                  <em className={tab.id === "issues" && blocking > 0 ? "alert" : undefined}>{status[tab.id]}</em>
-                </button>
-              </li>
-            ))}
-            <li>
-              <button {...legendRow("share")}>
-                <b><ShareIcon size={14} aria-hidden="true" /></b>
-                <span><strong>{shareTarget.label}</strong><small>{shareTarget.object} · {shareTarget.summary}</small></span>
-                <em>{current.people.length} {current.people.length === 1 ? "person" : "people"}</em>
+        <h1 id="home-title" className="visually-hidden">{current.name}</h1>
+        <div className="stage-model">
+          <div className="diorama-frame" role="group" aria-label={`Model of ${current.name}. Each labelled object opens part of the plan.`}>
+            <HomeDiorama issueCount={issues.length} hasErrors={blocking > 0} statuses={status} active={active} onHover={setActive} onSelect={selectTarget} />
+            <p className="stage-hint">Drag to turn · pick an object to open it</p>
+          </div>
+        </div>
+        {/* On phones the callouts shrink to numbers, so this key spells them out. Hidden on wider screens. */}
+        <ol className="stage-index" aria-label="Parts of the plan">
+          {workspaceTabs.map((tab) => (
+            <li key={tab.id}>
+              <button type="button" onClick={() => onOpen(current.id, tab.id)}>
+                <b>{tab.index}</b>
+                <strong>{tab.label}</strong>
+                <em className={tab.id === "issues" && blocking > 0 ? "alert" : undefined}>{status[tab.id]}</em>
               </button>
             </li>
-          </ol>
-        </div>
-
-        <div className="stage-model">
-          <div className="diorama-frame" role="img" aria-label={`Miniature model of ${current.name}. Each object opens part of the plan; the list beside it has the same links.`}>
-            <HomeDiorama issueCount={issues.length} hasErrors={blocking > 0} active={active} onHover={setActive} onSelect={(target) => onOpen(current.id, target)} />
-          </div>
-          <p className="stage-hint">Drag to turn the model</p>
-          <dl className="title-block">
-            <div><dt>Room</dt><dd>{roomSize} · {units.formatLength(room.height)} high</dd></div>
-            <div><dt>Group cart</dt><dd className={over > 0 ? "warn-text" : undefined}>{cents(subtotal.amount)} of {cents(current.budgetAmount)}</dd></div>
-            <div><dt>Checks</dt><dd>{issues.length ? `${issues.length} open · ${blocking} blocking` : "All clear"}</dd></div>
-            <div><dt>Roommates</dt><dd>{current.people.map((person) => person.name).join(", ") || "Just you"}</dd></div>
-          </dl>
-        </div>
+          ))}
+          <li>
+            <button type="button" onClick={() => onOpen(current.id, "share")}>
+              <b><ShareIcon size={13} aria-hidden="true" /></b>
+              <strong>{shareTarget.label}</strong>
+              <em>{status.share}</em>
+            </button>
+          </li>
+          <li>
+            <button type="button" onClick={() => selectTarget("rooms")}>
+              <b><RoomsIcon size={13} aria-hidden="true" /></b>
+              <strong>{roomsTarget.label}</strong>
+              <em>{status.rooms}</em>
+            </button>
+          </li>
+        </ol>
       </section>
 
-      <section className="rooms-section" aria-labelledby="rooms-title">
+      <section className="rooms-section" id="rooms" ref={roomsSection} aria-labelledby="rooms-title">
         <div className="section-title-row">
           <div>
             <p className="eyebrow">Index</p>
-            <h2 id="rooms-title">Your rooms</h2>
+            <h2 id="rooms-title" ref={roomsHeading} tabIndex={-1}>Your rooms</h2>
           </div>
           <div className="section-actions">
             <button className="secondary-button" onClick={onReset}><RotateCcw size={16} /> Reset demo</button>
