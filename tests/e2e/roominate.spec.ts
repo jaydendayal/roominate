@@ -9,7 +9,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await expect(page.getByRole("heading", { name: /Make room for/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your rooms" })).toBeVisible();
 });
 
 test.afterEach(async ({ page }) => {

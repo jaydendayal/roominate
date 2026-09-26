@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, Box, Check, Download, LoaderCircle, RefreshCw, RotateCcw, Sparkles, WandSparkles, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Box, Check, Download, ListChecks, LoaderCircle, MessageSquareText, RefreshCw, RotateCcw, ShoppingBag, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { calculateIssues, cents, productFor } from "@/lib/calculations";
 import { applyAcceptedProposal, generateProposal } from "@/lib/proposals";
@@ -57,7 +57,7 @@ export function BetterCartPanel({ project, issues, update, captureUndo }: { proj
   };
 
   if (!proposal) {
-    return <div className="better-empty-page"><div className="better-orb"><Sparkles size={34} /></div><p className="eyebrow">Better Cart</p><h1>A calmer room starts with<br /><em>a smarter cart.</em></h1><p>Roominate will test smaller alternatives, duplicate coordination, rule-safe removals, and real placements—then explain every tradeoff.</p><div className="better-inputs"><span><Box size={17} /> {project.items.filter((item) => item.purchaseStatus === "in_cart").length} cart items</span><span><AlertTriangle size={17} /> {issues.length} current issues</span><span>{cents(project.budgetAmount)} limit</span></div><div className="header-button-row"><button className="primary-button generate-button" disabled={generating} onClick={() => void generate()}>{generating ? <LoaderCircle className="spin" size={18} /> : <WandSparkles size={18} />} Generate Better Cart</button><button className="secondary-button generate-button" onClick={() => downloadShoppingList(project)}><Download size={17} /> Export current list</button></div><small>Optimization and validation run in code. AI is used only for concise explanations when configured.</small></div>;
+    return <div className="better-empty-page"><div className="better-orb"><ShoppingBag size={30} strokeWidth={1.6} /></div><p className="eyebrow">Better Cart</p><h1>A calmer room starts with<br /><em>a smarter cart.</em></h1><p>Roominate will test smaller alternatives, duplicate coordination, rule-safe removals, and real placements—then explain every tradeoff.</p><div className="better-inputs"><span><Box size={17} /> {project.items.filter((item) => item.purchaseStatus === "in_cart").length} cart items</span><span><AlertTriangle size={17} /> {issues.length} current issues</span><span>{cents(project.budgetAmount)} limit</span></div><div className="header-button-row"><button className="primary-button generate-button" disabled={generating} onClick={() => void generate()}>{generating ? <LoaderCircle className="spin" size={18} /> : <ListChecks size={18} />} Generate Better Cart</button><button className="secondary-button generate-button" onClick={() => downloadShoppingList(project)}><Download size={17} /> Export current list</button></div><small>Optimization and validation run in code. AI is used only for concise explanations when configured.</small></div>;
   }
 
   return (
@@ -67,7 +67,7 @@ export function BetterCartPanel({ project, issues, update, captureUndo }: { proj
       <div className="proposal-summary panel-surface">
         <div><span>Before</span><strong>{cents(proposal.beforeSubtotal)}</strong><small>{issues.length} issues</small></div><ArrowRight size={22} /><div className="after"><span>Proposed</span><strong>{cents(proposal.afterSubtotal)}</strong><small>{proposal.remainingIssueIds.length} remain</small></div><div className="savings"><span>You save</span><strong>{cents(Math.max(0, proposal.beforeSubtotal - proposal.afterSubtotal))}</strong><small>{proposal.resolvedIssueIds.length} checks resolved</small></div>
       </div>
-      {explanationStatus && <div className="explanation-status"><Sparkles size={14} /> {explanationStatus}</div>}
+      {explanationStatus && <div className="explanation-status"><MessageSquareText size={14} /> {explanationStatus}</div>}
       <div className="proposal-grid">
         <section className="panel-surface change-list-panel">
           <div className="panel-heading"><div><p className="eyebrow">Suggested changes</p><h2>Choose what to apply</h2></div><span>{proposal.changes.filter((change) => change.accepted).length} accepted</span></div>
@@ -76,7 +76,7 @@ export function BetterCartPanel({ project, issues, update, captureUndo }: { proj
               const item = project.items.find((candidate) => candidate.id === change.itemId);
               const original = item ? productFor(project, item) : null;
               const replacement = project.products.find((product) => product.id === change.replacementProductId);
-              return <article className={`${change.accepted === true ? "accepted" : ""} ${change.accepted === false ? "rejected" : ""}`} key={change.id}><div className="change-index">{index + 1}</div><div className="change-copy"><span className="change-type">{change.type}</span><h3>{replacement ? `${original?.name} → ${replacement.name}` : original?.name}</h3><p>{change.reason}</p>{change.explanation && <p className="ai-explanation"><Sparkles size={12} aria-hidden="true" /><span><b>AI summary:</b> {change.explanation}</span></p>}<small>{change.impact} · {change.confidence} evidence</small><div className="change-actions"><button className={change.accepted === true ? "accept active" : "accept"} onClick={() => toggle(change.id, true)}><Check size={15} /> Accept</button><button className={change.accepted === false ? "reject active" : "reject"} onClick={() => toggle(change.id, false)}><X size={15} /> Reject</button></div></div></article>;
+              return <article className={`${change.accepted === true ? "accepted" : ""} ${change.accepted === false ? "rejected" : ""}`} key={change.id}><div className="change-index">{index + 1}</div><div className="change-copy"><span className="change-type">{change.type}</span><h3>{replacement ? `${original?.name} → ${replacement.name}` : original?.name}</h3><p>{change.reason}</p>{change.explanation && <p className="ai-explanation"><span className="ai-tag">AI summary</span><span>{change.explanation}</span></p>}<small>{change.impact} · {change.confidence} evidence</small><div className="change-actions"><button className={change.accepted === true ? "accept active" : "accept"} onClick={() => toggle(change.id, true)}><Check size={15} /> Accept</button><button className={change.accepted === false ? "reject active" : "reject"} onClick={() => toggle(change.id, false)}><X size={15} /> Reject</button></div></div></article>;
             })}
             {!proposal.changes.length && <div className="empty-state"><Check size={27} /><h3>No safe automatic changes found</h3><p>Review remaining constraints or confirm missing measurements before regenerating.</p></div>}
           </div>
