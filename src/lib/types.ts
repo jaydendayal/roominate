@@ -130,7 +130,8 @@ export interface Item {
   quantity: number;
   essentiality: "essential" | "optional";
   needsServed: string[];
-  transform: { position: Vec2; rotationY: number } | null;
+  /** `elevation` is the height of the item's base above the floor in meters; omitted means 0 (on the floor). */
+  transform: { position: Vec2; rotationY: number; elevation?: number } | null;
   placementType: "floor" | "wall" | "stacked";
   locked?: boolean;
 }
