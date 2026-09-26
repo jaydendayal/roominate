@@ -5,8 +5,13 @@ import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
 import { OrbitControls, Text } from "@react-three/drei";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
-import { collidingItemIds, itemElevation, itemExceedsRoom, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
+import { useUnitPreferences } from "@/hooks/useUnitPreferences";
+import { LengthInput } from "./LengthInput";
+import { calculateIssues, collidingItemIds, itemElevation, itemExceedsRoom, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
+import { snapItemPosition, stepPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
+import { gridOptions } from "@/lib/units";
+import { FurnitureModel } from "./FurnitureModel";
 
 interface RoomCanvasProps {
   project: Project;
@@ -35,6 +40,67 @@ function CameraRig({ project, command, controlsRef }: { project: Project; comman
     }
   }, [camera, command, controlsRef, project.room.height, project.room.length, project.room.width]);
   return null;
+}
+
+const MAX_GRID_LINES_PER_AXIS = 400;
+
+/** Floor grid with exact square size, anchored at the room origin corner so squares count out from the walls. */
+function FloorGrid({ width, length, cell }: { width: number; length: number; cell: number }) {
+  const geometry = useMemo(() => {
+    const points: number[] = [];
+    const columns = Math.floor(width / cell + 1e-6);
+    const rows = Math.floor(length / cell + 1e-6);
+    if (columns <= MAX_GRID_LINES_PER_AXIS && rows <= MAX_GRID_LINES_PER_AXIS) {
+      for (let i = 1; i <= columns; i += 1) points.push(i * cell, 0, 0, i * cell, 0, length);
+      for (let j = 1; j <= rows; j += 1) points.push(0, 0, j * cell, width, 0, j * cell);
+    }
+    const buffer = new THREE.BufferGeometry();
+    buffer.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+    return buffer;
+  }, [cell, length, width]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return (
+    <lineSegments geometry={geometry} position={[0, 0.004, 0]}>
+      <lineBasicMaterial color="#6f5642" transparent opacity={0.45} />
+    </lineSegments>
+  );
+}
+
+function GridScaleLegend({ showMovement }: { showMovement: boolean }) {
+  const { unitSystem, setUnitSystem, gridSize, setGridSize, snapToGrid, setSnapToGrid, stepMoves, setStepMoves, moveStep, setMoveStep, objectUnit } = useUnitPreferences();
+  return (
+    <div className="grid-scale" role="group" aria-label="Grid scale, units, and movement">
+      <div className="grid-scale-row">
+        <span className="grid-scale-swatch" aria-hidden="true" />
+        <label>
+          <span>1 square =</span>
+          <select aria-label="Grid square size" value={gridSize} onChange={(event) => setGridSize(Number(event.target.value))}>
+            {gridOptions[unitSystem].map((option) => <option key={option.label} value={option.meters}>{option.label}</option>)}
+          </select>
+        </label>
+        <div className="unit-toggle" role="group" aria-label="Distance units">
+          <button type="button" aria-pressed={unitSystem === "imperial"} aria-label="Imperial (feet and inches)" title="Imperial (feet and inches)" onClick={() => setUnitSystem("imperial")}>ft</button>
+          <button type="button" aria-pressed={unitSystem === "metric"} aria-label="Metric (meters and centimeters)" title="Metric (meters and centimeters)" onClick={() => setUnitSystem("metric")}>m</button>
+        </div>
+      </div>
+      {showMovement && (
+        <div className="grid-scale-row">
+          <label className="snap-toggle" title="When you let go of a dragged item (or rotate it), its edges line up with grid lines or walls">
+            <input type="checkbox" checked={snapToGrid} onChange={(event) => setSnapToGrid(event.target.checked)} />
+            <span>Snap to grid</span>
+          </label>
+          <div className="step-toggle" title="While dragging, items move one step of this distance at a time from where they started">
+            <label>
+              <input type="checkbox" checked={stepMoves} onChange={(event) => setStepMoves(event.target.checked)} />
+              <span>Move in steps of</span>
+            </label>
+            <LengthInput aria-label={`Movement step (${objectUnit})`} min={0} step={1} unit={objectUnit} meters={moveStep} onChange={(meters) => { if (meters != null) setMoveStep(meters); }} />
+            <span>{objectUnit}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface RoomClipPlanes {
@@ -66,7 +132,8 @@ const FLOOR_SNAP = 0.04;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const roundMm = (value: number) => Math.round(value * 1000) / 1000;
 
-function OutOfRoomVolume({ width, height, depth, planes }: { width: number; height: number; depth: number; planes: THREE.Plane[] }) {
+/** Faint x-ray of the collision box's out-of-room part, so it stays visible behind walls and under the floor. */
+function OutOfRoomGhost({ width, height, depth, planes }: { width: number; height: number; depth: number; planes: THREE.Plane[] }) {
   const box = useMemo(() => new THREE.BoxGeometry(width, height, depth), [width, height, depth]);
   const edges = useMemo(() => new THREE.EdgesGeometry(box), [box]);
   useEffect(() => () => {
@@ -75,10 +142,6 @@ function OutOfRoomVolume({ width, height, depth, planes }: { width: number; heig
   }, [box, edges]);
   return (
     <>
-      <mesh geometry={box}>
-        <meshStandardMaterial color={OUT_OF_ROOM_RED} emissive="#8f0f08" emissiveIntensity={0.55} roughness={0.5} side={THREE.DoubleSide} clippingPlanes={planes} clipIntersection />
-      </mesh>
-      {/* X-ray pass so the invalid part stays visible behind walls and under the floor. */}
       <mesh geometry={box} renderOrder={10}>
         <meshBasicMaterial color={OUT_OF_ROOM_RED} transparent opacity={0.22} depthTest={false} depthWrite={false} side={THREE.DoubleSide} clippingPlanes={planes} clipIntersection />
       </mesh>
@@ -129,7 +192,10 @@ function FurnitureItem({
   selected,
   clipPlanes,
   onSelect,
-  onMove,
+  onDrag,
+  onDragEnd,
+  onLift,
+  onLiftEnd,
   setDragging,
 }: {
   project: Project;
@@ -138,7 +204,14 @@ function FurnitureItem({
   selected: boolean;
   clipPlanes: RoomClipPlanes;
   onSelect?: (id: string) => void;
-  onMove?: (id: string, position: Vec2, elevation: number) => void;
+  /** Live preview while the pointer moves; not persisted. */
+  onDrag?: (id: string, position: Vec2) => void;
+  /** Called once on release with the final position, or null if the drag was cancelled or never moved. */
+  onDragEnd?: (id: string, position: Vec2 | null) => void;
+  /** Live preview of the height while the lift arrow is dragged; not persisted. */
+  onLift?: (id: string, elevation: number) => void;
+  /** Called once on release with the final height, or null if the lift was cancelled or never moved. */
+  onLiftEnd?: (id: string, elevation: number | null) => void;
   setDragging: (dragging: boolean) => void;
 }) {
   const { camera, gl } = useThree();
@@ -154,67 +227,73 @@ function FurnitureItem({
   const itemHeight = dimensions.height;
 
   const exceedsRoom = itemExceedsRoom(project, item);
-  // Wall/floor/ceiling violations are shown by the red out-of-room volume, so they don't tint the whole item.
+  // Wall/floor/ceiling violations are shown by the red out-of-room part, so they don't tint the whole item.
   const tintConflict = exceedsRoom
     ? issues.some((issue) => issue.severity === "error" && issue.affectedItemIds.includes(item.id) && !issue.affectedGeometryIds.includes(project.room.id))
     : conflict;
   const color = selected ? "#f2b544" : tintConflict ? "#df654f" : item.acquisitionStatus === "owned" ? "#7d9688" : owner?.color ?? "#c99169";
-  const canMove = Boolean(onMove) && !item.locked;
+  const modelProps = { category: product.category, name: product.name, dimensions: { width: dimensions.width, depth: dimensions.depth, height: dimensions.height }, profile: product.visualProfile };
 
-  const trackPointer = (pointerId: number, move: (pointerEvent: PointerEvent) => void, onStop?: () => void) => {
+  // Follows one pointer until release (commit) or cancel, then reports back once.
+  const trackPointer = (pointerId: number, move: (pointerEvent: PointerEvent) => void, finish: (commit: boolean) => void) => {
     activePointer.current = pointerId;
     setDragging(true);
     const handleMove = (pointerEvent: PointerEvent) => {
       if (pointerEvent.pointerId === activePointer.current) move(pointerEvent);
     };
-    const stop = (pointerEvent: PointerEvent) => {
+    const end = (pointerEvent: PointerEvent, commit: boolean) => {
       if (pointerEvent.pointerId !== activePointer.current) return;
       activePointer.current = null;
       setDragging(false);
-      onStop?.();
       window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", cancel);
+      finish(commit);
     };
+    const release = (pointerEvent: PointerEvent) => end(pointerEvent, true);
+    const cancel = (pointerEvent: PointerEvent) => end(pointerEvent, false);
     window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", cancel);
   };
 
   const startDrag = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
     onSelect?.(item.id);
-    if (!onMove || item.locked || !item.transform) return;
-    const transform = item.transform;
+    if (!onDragEnd || item.locked) return;
     const raycaster = new THREE.Raycaster();
-    // Drag across a horizontal plane at the grabbed point's height so the item stays under the cursor.
+    // A horizontal plane at the grabbed point's height, so raised items track the pointer as well as floor items.
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -event.point.y);
-    const grabOffset = { x: event.point.x - position.x, z: event.point.z - position.z };
     const point = new THREE.Vector3();
-    let placed = item;
-    trackPointer(event.pointerId, (pointerEvent) => {
+    const planePoint = (clientX: number, clientY: number) => {
       const rect = gl.domElement.getBoundingClientRect();
-      const mouse = new THREE.Vector2(
-        ((pointerEvent.clientX - rect.left) / rect.width) * 2 - 1,
-        -((pointerEvent.clientY - rect.top) / rect.height) * 2 + 1,
-      );
-      raycaster.setFromCamera(mouse, camera);
-      if (!raycaster.ray.intersectPlane(plane, point)) return;
-      const next = {
-        x: roundMm(clamp(point.x - grabOffset.x, -0.5, project.room.width + 0.5)),
-        z: roundMm(clamp(point.z - grabOffset.z, -0.5, project.room.length + 0.5)),
+      raycaster.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), camera);
+      return raycaster.ray.intersectPlane(plane, point) ? { x: point.x, z: point.z } : null;
+    };
+    // Move by how far the pointer travels, keeping the spot where the item was grabbed under the pointer.
+    const grab = planePoint(event.nativeEvent.clientX, event.nativeEvent.clientY);
+    if (!grab) return;
+    const start = { ...position };
+    let last: Vec2 | null = null;
+    trackPointer(event.pointerId, (pointerEvent) => {
+      const current = planePoint(pointerEvent.clientX, pointerEvent.clientY);
+      if (!current) return;
+      last = {
+        x: roundMm(clamp(start.x + current.x - grab.x, -0.5, project.room.width + 0.5)),
+        z: roundMm(clamp(start.z + current.z - grab.z, -0.5, project.room.length + 0.5)),
       };
-      // Settle step by step from the last placed state so surface changes (onto, off of) are seen as they happen.
-      const nextElevation = roundMm(settledElevation(project, placed, next));
-      placed = { ...item, transform: { ...transform, position: next, elevation: nextElevation } };
-      onMove(item.id, next, nextElevation);
-    });
+      onDrag?.(item.id, last);
+    }, (commit) => onDragEnd(item.id, commit ? last : null));
   };
 
   const startLift = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
-    if (!onMove || item.locked) return;
+    if (!onLiftEnd || item.locked) return;
+    // Items already intersecting at grab time are ignored, so an existing collision can't trap the item.
     const ignored = new Set(collidingItemIds(project, item));
     let desired = elevation;
-    let last = { x: event.nativeEvent.clientX, y: event.nativeEvent.clientY };
+    let last: number | null = null;
+    let pointer = { x: event.nativeEvent.clientX, y: event.nativeEvent.clientY };
     const toScreen = (y: number, rect: DOMRect) => {
       const projected = new THREE.Vector3(position.x, y, position.z).project(camera);
       return new THREE.Vector2(((projected.x + 1) / 2) * rect.width, ((1 - projected.y) / 2) * rect.height);
@@ -225,37 +304,32 @@ function FurnitureItem({
       // Screen-space pixels per meter of upward travel at the current height; near-overhead views fall back to plain vertical mouse travel.
       let axis = toScreen(desired + 1, rect).sub(toScreen(desired, rect));
       if (axis.lengthSq() < 64) axis = new THREE.Vector2(0, -rect.height / 4);
-      const dx = pointerEvent.clientX - last.x;
-      const dy = pointerEvent.clientY - last.y;
-      last = { x: pointerEvent.clientX, y: pointerEvent.clientY };
+      const dx = pointerEvent.clientX - pointer.x;
+      const dy = pointerEvent.clientY - pointer.y;
+      pointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
       desired = clamp(desired + (dx * axis.x + dy * axis.y) / axis.lengthSq(), -(itemHeight - 0.05), project.room.height - 0.05);
+      // Moving down into another item stops on top of it; near the floor, snap onto it.
       let next = stackedElevation(project, item, desired, ignored);
       if (Math.abs(next) < FLOOR_SNAP) next = 0;
-      onMove(item.id, position, roundMm(next));
-    }, () => setLiftingActive(false));
+      last = roundMm(next);
+      onLift?.(item.id, last);
+    }, (commit) => {
+      setLiftingActive(false);
+      onLiftEnd(item.id, commit ? last : null);
+    });
   };
 
   return (
     <group position={[position.x, elevation + itemHeight / 2, position.z]} rotation={[0, item.transform?.rotationY ?? 0, 0]}>
-      <mesh castShadow receiveShadow onPointerDown={startDrag}>
-        <boxGeometry args={[dimensions.width, dimensions.height, dimensions.depth]} />
-        <meshStandardMaterial
-          color={color}
-          roughness={0.72}
-          transparent
-          opacity={tintConflict ? 0.82 : 1}
-          clippingPlanes={exceedsRoom ? clipPlanes.inside : null}
-          clipShadows
-        />
-      </mesh>
-      {exceedsRoom && <OutOfRoomVolume width={dimensions.width} height={dimensions.height} depth={dimensions.depth} planes={clipPlanes.outside} />}
-      {selected && elevation > FLOOR_SNAP / 4 && (
-        <group position={[0, -itemHeight / 2 - elevation / 2, 0]}>
-          <mesh><cylinderGeometry args={[0.006, 0.006, elevation, 8]} /><meshBasicMaterial color={HANDLE_BLUE} transparent opacity={0.7} /></mesh>
-          <mesh position={[0, -elevation / 2 + 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[0.035, 0.05, 24]} /><meshBasicMaterial color={HANDLE_BLUE} side={THREE.DoubleSide} /></mesh>
-        </group>
+      <group onPointerDown={startDrag}>
+        <FurnitureModel {...modelProps} color={color} opacity={tintConflict ? 0.82 : 1} emphasized={selected || tintConflict} clipping={exceedsRoom ? { planes: clipPlanes.inside } : undefined} />
+      </group>
+      {exceedsRoom && (
+        <>
+          <FurnitureModel {...modelProps} color={OUT_OF_ROOM_RED} emphasized clipping={{ planes: clipPlanes.outside, intersection: true }} />
+          <OutOfRoomGhost width={dimensions.width} height={dimensions.height} depth={dimensions.depth} planes={clipPlanes.outside} />
+        </>
       )}
-      {selected && canMove && <ElevationHandle offsetY={itemHeight / 2 + 0.42} active={liftingActive} onPointerDown={startLift} />}
       {(selected || conflict) && (
         <lineSegments>
           <edgesGeometry args={[new THREE.BoxGeometry(dimensions.width + 0.025, dimensions.height + 0.025, dimensions.depth + 0.025)]} />
@@ -271,13 +345,67 @@ function FurnitureItem({
         anchorX="center"
         maxWidth={1.5}
       >{conflict ? `! ${product.name}` : product.name}</Text>}
+      {selected && elevation > FLOOR_SNAP / 4 && (
+        <group position={[0, -itemHeight / 2 - elevation / 2, 0]}>
+          <mesh><cylinderGeometry args={[0.006, 0.006, elevation, 8]} /><meshBasicMaterial color={HANDLE_BLUE} transparent opacity={0.7} /></mesh>
+          <mesh position={[0, -elevation / 2 + 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[0.035, 0.05, 24]} /><meshBasicMaterial color={HANDLE_BLUE} side={THREE.DoubleSide} /></mesh>
+        </group>
+      )}
+      {selected && onLiftEnd && !item.locked && <ElevationHandle offsetY={itemHeight / 2 + 0.42} active={liftingActive} onPointerDown={startLift} />}
     </group>
   );
 }
 
-function Scene({ project, issues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand }: RoomCanvasProps) {
+interface DragPreview {
+  itemId: string;
+  position: Vec2;
+  elevation: number;
+}
+
+function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, gridSize, snapToGrid, moveStep }: RoomCanvasProps & { gridSize: number; snapToGrid: boolean; moveStep: number | null }) {
   const controls = useRef<OrbitControlsImpl | null>(null);
   const [dragging, setDragging] = useState(false);
+  // While dragging, render a local preview (with live conflict colors) and save only on release.
+  const [preview, setPreview] = useState<DragPreview | null>(null);
+  // The dragged item as last previewed. Drags settle step by step from it, so moving onto or off another item registers as it happens.
+  const placed = useRef<Item | null>(null);
+  const project = useMemo(() => preview ? {
+    ...savedProject,
+    items: savedProject.items.map((item) => item.id === preview.itemId && item.transform ? { ...item, transform: { ...item.transform, position: preview.position, elevation: preview.elevation } } : item),
+  } : savedProject, [preview, savedProject]);
+  const issues = useMemo(() => (preview ? calculateIssues(project) : savedIssues), [preview, project, savedIssues]);
+  const savedItem = (itemId: string) => savedProject.items.find((item) => item.id === itemId);
+  // While dragging: whole steps only (if on). The saved position doesn't change mid-drag, so it is the step origin.
+  const stepped = (itemId: string, position: Vec2) => {
+    const start = savedItem(itemId)?.transform?.position;
+    return moveStep && start ? stepPosition(start, position, moveStep) : position;
+  };
+  // Height after moving to `position`: surface-following items drop off edges and land on top of what they move into.
+  const settle = (itemId: string, position: Vec2): DragPreview | null => {
+    const saved = savedItem(itemId);
+    if (!saved?.transform) return null;
+    const from = placed.current?.id === itemId ? placed.current : saved;
+    const elevation = roundMm(settledElevation(savedProject, from, position));
+    placed.current = { ...saved, transform: { ...saved.transform, position, elevation } };
+    return { itemId, position, elevation };
+  };
+  const drag = (itemId: string, position: Vec2) => setPreview(settle(itemId, stepped(itemId, position)));
+  // On release: snap to the grid (if on) after stepping, then settle once more in case the snap moved it off or onto an edge.
+  const endDrag = (itemId: string, position: Vec2 | null) => {
+    setPreview(null);
+    const final = position ? settle(itemId, snapToGrid ? snapItemPosition(savedProject, itemId, stepped(itemId, position), gridSize) : stepped(itemId, position)) : null;
+    placed.current = null;
+    if (final) onMoveItem?.(itemId, final.position, final.elevation);
+  };
+  const lift = (itemId: string, elevation: number) => {
+    const position = savedItem(itemId)?.transform?.position;
+    if (position) setPreview({ itemId, position, elevation });
+  };
+  const endLift = (itemId: string, elevation: number | null) => {
+    setPreview(null);
+    const position = savedItem(itemId)?.transform?.position;
+    if (position && elevation != null) onMoveItem?.(itemId, position, elevation);
+  };
   const wallColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex ?? "#e7dfd0";
   const floorColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("floor"))?.hex ?? "#a77f59";
   const center = useMemo(() => new THREE.Vector3(project.room.width / 2, 0.55, project.room.length / 2), [project.room.length, project.room.width]);
@@ -295,7 +423,7 @@ function Scene({ project, issues, selectedItemId, onSelectItem, onMoveItem, cuta
         <boxGeometry args={[project.room.width, project.room.length, 0.05]} />
         <meshStandardMaterial color={floorColor} roughness={0.92} />
       </mesh>
-      <gridHelper args={[Math.max(project.room.width, project.room.length) + 1, 16, "#92745f", "#c5ae98"]} position={[project.room.width / 2, 0.005, project.room.length / 2]} />
+      <FloorGrid width={project.room.width} length={project.room.length} cell={gridSize} />
       <mesh position={[-0.04, project.room.height / 2, project.room.length / 2]} castShadow receiveShadow>
         <boxGeometry args={[0.08, project.room.height, project.room.length]} />
         <meshStandardMaterial color={wallColor} />
@@ -330,7 +458,10 @@ function Scene({ project, issues, selectedItemId, onSelectItem, onMoveItem, cuta
           selected={selectedItemId === item.id}
           clipPlanes={clipPlanes}
           onSelect={onSelectItem}
-          onMove={onMoveItem}
+          onDrag={onMoveItem ? drag : undefined}
+          onDragEnd={onMoveItem ? endDrag : undefined}
+          onLift={onMoveItem ? lift : undefined}
+          onLiftEnd={onMoveItem ? endLift : undefined}
           setDragging={setDragging}
         />
       ))}
@@ -339,18 +470,22 @@ function Scene({ project, issues, selectedItemId, onSelectItem, onMoveItem, cuta
 }
 
 export function RoomCanvas(props: RoomCanvasProps) {
+  const { gridSize, snapToGrid, stepMoves, moveStep } = useUnitPreferences();
   return (
-    <Canvas
-      shadows
-      dpr={[1, 1.6]}
-      camera={{ fov: 42, near: 0.05, far: 100 }}
-      gl={{ antialias: true }}
-      onCreated={({ gl }) => {
-        // Per-material clipping splits out-of-room parts of furniture into the red highlight.
-        gl.localClippingEnabled = true;
-      }}
-    >
-      <Scene {...props} />
-    </Canvas>
+    <div className="room-canvas">
+      <Canvas
+        shadows
+        dpr={[1, 1.6]}
+        camera={{ fov: 42, near: 0.05, far: 100 }}
+        gl={{ antialias: true }}
+        onCreated={({ gl }) => {
+          // Per-material clipping splits out-of-room parts of furniture into the red highlight.
+          gl.localClippingEnabled = true;
+        }}
+      >
+        <Scene {...props} gridSize={gridSize} snapToGrid={snapToGrid} moveStep={stepMoves ? moveStep : null} />
+      </Canvas>
+      <GridScaleLegend showMovement={Boolean(props.onMoveItem)} />
+    </div>
   );
 }

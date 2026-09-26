@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowDown, ArrowRight, ArrowUp, Check, DoorOpen, ImagePlus, LoaderCircle, Palette, Plus, Ruler, ScanLine, Trash2, Upload, Video } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Camera, Check, Crosshair, DoorOpen, ImagePlus, LoaderCircle, Palette, Plus, Ruler, ScanLine, Trash2, Upload, Video } from "lucide-react";
+import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { calculateIssues } from "@/lib/calculations";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, normalizeImageUpload } from "@/lib/api";
 import type { EvidenceSource, MediaAsset, PaletteSwatch, Project } from "@/lib/types";
+import { LengthInput } from "../LengthInput";
 import { RoomCanvas } from "../RoomCanvas";
+import { GuidedRoomScan } from "./GuidedRoomScan";
 
 const sourceLabels: Record<EvidenceSource, string> = {
   user_confirmed: "Measured / confirmed",
@@ -15,13 +18,18 @@ const sourceLabels: Record<EvidenceSource, string> = {
   url: "Product URL",
   screenshot: "Screenshot",
   demo_fixture: "Demo fixture",
+  retailer_api: "Retailer API",
 };
 
 interface RoomAnalysisResponse {
-  status: "complete" | "manual_fallback" | "cached";
+  status: "complete" | "partial" | "manual_fallback" | "cached";
   schema_version: string;
   palette: { hex: string; label: string; confidence: number; evidence: string }[];
   room: { width_m: number | null; length_m: number | null; height_m: number | null; notes: string[] };
+  corners: { frame_index: number; position: { x: number; y: number }; kind: "wall_floor" | "wall_ceiling" | "wall_wall" | "opening" | "other"; confidence: number; evidence: string }[];
+  surfaces: { frame_index: number; kind: "wall" | "floor" | "ceiling"; polygon: { x: number; y: number }[]; confidence: number; evidence: string }[];
+  dimension_estimates: { dimension: "width" | "length" | "height"; meters: number | null; confidence: number; basis: "confirmed_reference" | "visual_estimate" | "insufficient_evidence"; evidence: string }[];
+  uncertainties: string[];
   message?: string;
 }
 
@@ -48,7 +56,12 @@ async function fileToAsset(file: File): Promise<MediaAsset> {
 export function CapturePanel({ project, update, onContinue }: { project: Project; update: (updater: (project: Project) => Project) => void; onContinue: () => void }) {
   const [analysisState, setAnalysisState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [analysisMessage, setAnalysisMessage] = useState("");
+  const [analysisResult, setAnalysisResult] = useState<RoomAnalysisResponse | null>(null);
+  const [guidedScanOpen, setGuidedScanOpen] = useState(false);
   const issues = calculateIssues(project);
+  const units = useUnitPreferences();
+  const guidedAssets = project.room.mediaAssets.filter((asset) => asset.name.startsWith("guided-"));
+  const analysisAssets = guidedAssets.length >= 5 ? [guidedAssets[0], guidedAssets[2], guidedAssets[4]] : project.room.mediaAssets.slice(0, 3);
 
   const updateRoom = (patch: Partial<Project["room"]>) => update((current) => ({
     ...current,
@@ -56,8 +69,8 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
     proposal: current.proposal ? { ...current.proposal, stale: true } : null,
   }));
 
-  const changeDimension = (key: "width" | "length" | "height", value: number) => {
-    if (!Number.isFinite(value) || value <= 0) return;
+  const changeDimension = (key: "width" | "length" | "height", value: number | null) => {
+    if (value == null || !Number.isFinite(value) || value <= 0) return;
     update((current) => ({
       ...current,
       room: { ...current.room, [key]: value, geometryVersion: current.room.geometryVersion + 1 },
@@ -78,8 +91,14 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
 
   const addMedia = async (files: FileList | null) => {
     if (!files?.length) return;
-    const assets = await Promise.all([...files].map(fileToAsset));
-    updateRoom({ mediaAssets: [...project.room.mediaAssets, ...assets] });
+    try {
+      const normalized = await Promise.all([...files].map(normalizeImageUpload));
+      const assets = await Promise.all(normalized.map(fileToAsset));
+      updateRoom({ mediaAssets: [...project.room.mediaAssets, ...assets] });
+    } catch (error) {
+      setAnalysisState("error");
+      setAnalysisMessage(error instanceof Error ? error.message : "One of the selected images could not be prepared.");
+    }
   };
 
   const moveMedia = (index: number, offset: number) => {
@@ -96,13 +115,15 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
     try {
       const form = new FormData();
       form.set("project_id", project.id);
-      form.set("confirmed_dimensions", JSON.stringify({ width_m: project.room.width, length_m: project.room.length, height_m: project.room.height }));
-      for (const asset of project.room.mediaAssets.slice(0, 3)) {
+      const confirmedDimensions = Object.fromEntries((["width", "length", "height"] as const).flatMap((key) => project.room.dimensionEvidence[key].confirmedByUser ? [[`${key}_m`, project.room[key]]] : []));
+      form.set("confirmed_dimensions", JSON.stringify(confirmedDimensions));
+      for (const asset of analysisAssets) {
         if (!asset.dataUrl) continue;
         const blob = await fetch(asset.dataUrl).then((response) => response.blob());
         form.append("files", blob, asset.name);
       }
       const result = await apiFetch<RoomAnalysisResponse>("/api/v1/analyze-room", { method: "POST", body: form });
+      setAnalysisResult(result);
       const palette: PaletteSwatch[] = result.palette.map((swatch, index) => ({ id: `swatch-ai-${Date.now()}-${index}`, hex: swatch.hex, label: swatch.label, source: swatch.evidence, pinned: false }));
       updateRoom({ palette: palette.length ? palette : project.room.palette, reconstructionStatus: result.status === "manual_fallback" ? "manual" : "estimated" });
       setAnalysisState("done");
@@ -113,6 +134,17 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
     }
   };
 
+  const applyEstimate = (dimension: "width" | "length" | "height", meters: number) => update((current) => ({
+    ...current,
+    room: {
+      ...current.room,
+      [dimension]: meters,
+      geometryVersion: current.room.geometryVersion + 1,
+      dimensionEvidence: { ...current.room.dimensionEvidence, [dimension]: { source: "media_estimate", confidence: analysisResult?.dimension_estimates.find((candidate) => candidate.dimension === dimension)?.confidence ?? 0.4, confirmedByUser: false, note: "OpenAI vision estimate; requires user confirmation" } },
+    },
+    proposal: current.proposal ? { ...current.proposal, stale: true } : null,
+  }));
+
   return (
     <div className="flow-page capture-page">
       <header className="flow-header">
@@ -122,11 +154,12 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
       <div className="capture-grid">
         <section className="panel-surface form-card">
           <div className="step-heading"><span>1</span><div><h2>Add room media</h2><p>Photos and representative video frames stay private by default.</p></div></div>
-          <label className="upload-dropzone">
-            <input type="file" accept="image/*,video/*" multiple onChange={(event) => void addMedia(event.target.files)} />
+          <button className="guided-scan-button" onClick={() => setGuidedScanOpen(true)}><span className="upload-icon"><Camera size={22} /></span><span><strong>Start guided camera scan</strong><small>Capture six overlapping, quality-checked viewpoints</small></span><ArrowRight size={17} /></button>
+          <label className="upload-dropzone compact">
+            <input type="file" accept="image/*,.heic,.heif,video/*" multiple onChange={(event) => void addMedia(event.target.files)} />
             <span className="upload-icon"><ImagePlus size={22} /></span>
             <strong>Choose photos or a walkthrough</strong>
-            <small>Images under 3 MB are retained locally for this prototype.</small>
+            <small>HEIC, HEIF, JPEG, PNG, WebP, and video. Images under 3 MB are retained locally.</small>
           </label>
           <div className="media-list">
             {project.room.mediaAssets.map((asset, index) => (
@@ -147,14 +180,25 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
             {analysisState === "loading" ? <LoaderCircle className="spin" size={16} /> : <ScanLine size={16} />} Analyze selected media
           </button>
           {analysisMessage && <div className={`analysis-message ${analysisState}`}><span>{analysisState === "done" ? <Check size={16} /> : <Upload size={16} />}</span>{analysisMessage}</div>}
+          {analysisResult && analysisResult.status !== "manual_fallback" && <div className="scan-findings">
+            <div className="subsection-title"><h3>Detected room structure</h3><span>{analysisResult.corners.length} corners</span></div>
+            <div className="finding-frames">{analysisAssets.map((asset, index) => <div className="finding-frame" key={asset.id}>
+              {asset.dataUrl ? <img src={asset.dataUrl} alt={`Analyzed frame ${index + 1}`} /> : <div className="finding-frame-empty">Frame {index + 1}</div>}
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{analysisResult.surfaces.filter((surface) => surface.frame_index === index + 1).map((surface, surfaceIndex) => <polygon key={`${surface.kind}-${surfaceIndex}`} className={surface.kind} points={surface.polygon.map((point) => `${point.x * 100},${point.y * 100}`).join(" ")} />)}</svg>
+              {analysisResult.corners.filter((corner) => corner.frame_index === index + 1).map((corner, cornerIndex) => <span key={`${corner.kind}-${cornerIndex}`} className={`finding-point ${corner.kind}`} style={{ left: `${corner.position.x * 100}%`, top: `${corner.position.y * 100}%` }} title={`${corner.kind.replaceAll("_", " ")} · ${Math.round(corner.confidence * 100)}%`}><Crosshair size={13} /></span>)}
+              <b>Frame {index + 1}</b>
+            </div>)}</div>
+            <div className="dimension-suggestions">{analysisResult.dimension_estimates.map((estimate) => <div key={estimate.dimension}><span><strong>{estimate.dimension}</strong><small>{estimate.evidence}</small></span><b>{estimate.meters == null ? "Not enough evidence" : units.formatLength(estimate.meters)}</b>{estimate.meters != null && estimate.basis !== "confirmed_reference" ? <button className="text-button" onClick={() => applyEstimate(estimate.dimension, estimate.meters!)}>Use estimate</button> : <span className={`estimate-basis ${estimate.basis}`}>{estimate.basis === "confirmed_reference" ? "confirmed" : "unverified"}</span>}</div>)}</div>
+            {!!analysisResult.uncertainties.length && <div className="finding-uncertainties"><AlertTriangle size={15} /><span><strong>Needs review</strong>{analysisResult.uncertainties.slice(0, 3).map((uncertainty) => <small key={uncertainty}>{uncertainty}</small>)}</span></div>}
+          </div>}
         </section>
 
         <section className="panel-surface form-card">
-          <div className="step-heading"><span>2</span><div><h2>Confirm dimensions</h2><p>All geometry uses meters internally. These measurements override media estimates.</p></div></div>
+          <div className="step-heading"><span>2</span><div><h2>Confirm dimensions</h2><p>Enter measurements in your preferred units. These measurements override media estimates.</p></div></div>
           <div className="dimension-fields">
             {(["width", "length", "height"] as const).map((key) => (
               <div className="dimension-field" key={key}>
-                <label><span>{key[0].toUpperCase() + key.slice(1)}</span><div className="unit-input"><input type="number" min="0.1" max="30" step="0.01" value={project.room[key]} onChange={(event) => changeDimension(key, Number(event.target.value))} /><b>m</b></div></label>
+                <label><span>{key[0].toUpperCase() + key.slice(1)}</span><div className="unit-input"><LengthInput min={0} step={units.roomUnit === "ft" ? 0.25 : 0.01} unit={units.roomUnit} meters={project.room[key]} onChange={(meters) => changeDimension(key, meters)} /><b>{units.roomUnit}</b></div></label>
                 <select value={project.room.dimensionEvidence[key].source} onChange={(event) => changeEvidence(key, event.target.value as EvidenceSource)} aria-label={`${key} evidence source`}>
                   {(["user_confirmed", "imported_plan", "scan", "media_estimate"] as EvidenceSource[]).map((source) => <option value={source} key={source}>{sourceLabels[source]}</option>)}
                 </select>
@@ -164,13 +208,13 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
           <div className="evidence-note"><Ruler size={17} /><span><strong>Scale is anchored.</strong> The room has a valid floor and positive confirmed dimensions for placement.</span></div>
           <div className="subsection-title"><h3>Openings & fixed features</h3><button className="text-button" onClick={() => updateRoom({ features: [...project.room.features, { id: `door-${crypto.randomUUID()}`, name: "New door", kind: "door", position: { x: 0.5, z: 0 }, width: 0.9, depth: 0.08, height: 2.03, confirmed: false }] })}><Plus size={15} /> Add</button></div>
           <div className="feature-list">
-            {project.room.features.map((feature) => <div className="feature-row" key={feature.id}><span><DoorOpen size={17} /><strong>{feature.name}</strong></span><small>{feature.width.toFixed(2)} m · {feature.confirmed ? "confirmed" : "needs review"}</small></div>)}
+            {project.room.features.map((feature) => <div className="feature-row" key={feature.id}><span><DoorOpen size={17} /><strong>{feature.name}</strong></span><small>{units.formatLength(feature.width, "object")} wide · {feature.confirmed ? "confirmed" : "needs review"}</small></div>)}
             {!project.room.features.length && <p className="empty-row">No openings added yet. Door clearance remains unknown.</p>}
           </div>
         </section>
 
         <section className="capture-preview viewport-card">
-          <div className="preview-heading"><div><p className="eyebrow">Live scaled preview</p><h2>{project.room.width.toFixed(2)} × {project.room.length.toFixed(2)} × {project.room.height.toFixed(2)} m</h2></div><span className="source-chip confirmed"><Check size={13} /> measured</span></div>
+          <div className="preview-heading"><div><p className="eyebrow">Live scaled preview</p><h2>{units.formatLength(project.room.width)} × {units.formatLength(project.room.length)} × {units.formatLength(project.room.height)}</h2></div><span className="source-chip confirmed"><Check size={13} /> measured</span></div>
           <div className="capture-canvas"><RoomCanvas project={project} issues={issues} cutaway compact viewCommand={{ type: "reset", nonce: project.room.geometryVersion }} /></div>
           <div className="palette-bar">
             <span><Palette size={16} /> Room palette</span>
@@ -179,6 +223,18 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
           </div>
         </section>
       </div>
+      {guidedScanOpen && <GuidedRoomScan onClose={() => setGuidedScanOpen(false)} onComplete={(assets, reference) => {
+        update((current) => {
+          const room = { ...current.room, mediaAssets: [...current.room.mediaAssets, ...assets], reconstructionStatus: "estimated" as const, geometryVersion: current.room.geometryVersion + 1 };
+          if (reference) {
+            room[reference.dimension] = reference.meters;
+            room.dimensionEvidence = { ...room.dimensionEvidence, [reference.dimension]: { source: "user_confirmed" as const, confidence: 1, confirmedByUser: true, note: "Scale reference entered during guided browser scan" } };
+          }
+          return { ...current, room, proposal: current.proposal ? { ...current.proposal, stale: true } : null };
+        });
+        setGuidedScanOpen(false);
+        setAnalysisMessage(`${assets.length} guided viewpoints added. Analyze them, then review all dimensions.`);
+      }} />}
     </div>
   );
 }

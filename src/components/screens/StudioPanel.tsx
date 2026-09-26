@@ -1,9 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Box, ChevronRight, Eye, Grid3X3, Maximize2, Move3D, PackagePlus, RotateCw, ScanLine, ShoppingCart } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, ChevronRight, Eye, Grid3X3, Maximize2, Move3D, PackagePlus, RotateCw, ScanLine, ShoppingCart } from "lucide-react";
+import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/calculations";
+import { snapItemPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
+import { LengthInput } from "../LengthInput";
 import { RoomCanvas } from "../RoomCanvas";
 
 export function StudioPanel({
@@ -26,6 +29,7 @@ export function StudioPanel({
   const selectedProduct = selected ? productFor(project, selected) : null;
   const selectedIssues = issues.filter((issue) => selectedId && issue.affectedItemIds.includes(selectedId));
   const subtotal = purchaseSubtotal(project);
+  const units = useUnitPreferences();
 
   const changeItem = (itemId: string, patch: Partial<Project["items"][number]>) => {
     update((current) => ({
@@ -36,10 +40,39 @@ export function StudioPanel({
     }));
   };
 
-  // Typed X/Z moves settle like drags: off the top of an item they drop to the floor, into one they land on top.
+  // Typed and nudged moves settle like drags: off the top of an item they drop to the floor, into one they land on top.
   const moveTo = (item: Item, position: Vec2) => {
     const transform = item.transform ?? { position, rotationY: 0 };
     changeItem(item.id, { transform: { ...transform, position, elevation: settledElevation(project, { ...item, transform }, position) } });
+  };
+
+  const rotateSelected = () => {
+    if (!selected) return;
+    const rotationY = (selected.transform?.rotationY ?? 0) + Math.PI / 2;
+    const center = selected.transform?.position ?? { x: project.room.width / 2, z: project.room.length / 2 };
+    // Rotating swaps width and depth, so re-align edges when snapping is on.
+    const position = units.snapToGrid ? snapItemPosition(project, selected.id, center, units.gridSize, rotationY) : center;
+    changeItem(selected.id, { transform: { ...selected.transform, position, rotationY } });
+  };
+
+  // Nudges move by exactly the user's step distance from the current position.
+  const stepLabel = units.formatLength(units.moveStep, "object");
+  const coordinateStep = units.roomUnit === "ft" ? 0.25 : 0.05;
+  const nudgeSelected = (axis: keyof Vec2, direction: -1 | 1) => {
+    if (!selected?.transform || selected.locked) return;
+    const { position } = selected.transform;
+    moveTo(selected, { ...position, [axis]: Number((position[axis] + direction * units.moveStep).toFixed(4)) });
+  };
+
+  const moveSelectedAxis = (axis: keyof Vec2, meters: number | null) => {
+    if (!selected || meters == null) return;
+    moveTo(selected, { x: selected.transform?.position.x ?? 0, z: selected.transform?.position.z ?? 0, [axis]: meters });
+  };
+
+  const setSelectedElevation = (meters: number | null) => {
+    if (!selected || meters == null) return;
+    const transform = selected.transform ?? { position: { x: project.room.width / 2, z: project.room.length / 2 }, rotationY: 0 };
+    changeItem(selected.id, { transform: { ...transform, elevation: meters } });
   };
 
   return (
@@ -68,7 +101,7 @@ export function StudioPanel({
 
       <section className="viewport-card">
         <div className="viewport-topbar">
-          <span className="view-badge"><ScanLine size={14} /> {project.room.width.toFixed(2)} × {project.room.length.toFixed(2)} m</span>
+          <span className="view-badge"><ScanLine size={14} /> {units.formatLength(project.room.width)} × {units.formatLength(project.room.length)}</span>
           <div>
             <button className={`viewport-button ${cutaway ? "active" : ""}`} onClick={() => setCutaway((current) => !current)}><Eye size={16} /><span>Cutaway</span></button>
             <button className="viewport-button" onClick={() => setViewCommand({ type: "overhead", nonce: Date.now() })}><Grid3X3 size={16} /><span>Overhead</span></button>
@@ -101,14 +134,22 @@ export function StudioPanel({
           <div className="inspector-content">
             <p className="eyebrow">Selected object</p>
             <h3>{selectedProduct.name}</h3>
-            <p className="muted-copy">{selectedProduct.dimensions.width?.toFixed(2)} × {selectedProduct.dimensions.depth?.toFixed(2)} × {selectedProduct.dimensions.height?.toFixed(2)} m · {selected.placementType}</p>
+            <p className="muted-copy">{units.formatDimensions(selectedProduct.dimensions)} · {selected.placementType}</p>
             <div className="coordinate-grid">
-              <label>X (m)<input type="number" step="0.05" value={selected.transform?.position.x ?? 0} onChange={(event) => moveTo(selected, { x: Number(event.target.value), z: selected.transform?.position.z ?? 0 })} /></label>
-              <label>Y (m)<input type="number" step="0.05" value={selected.transform?.elevation ?? 0} onChange={(event) => changeItem(selected.id, { transform: { position: selected.transform?.position ?? { x: project.room.width / 2, z: project.room.length / 2 }, rotationY: selected.transform?.rotationY ?? 0, elevation: Number(event.target.value) } })} /></label>
-              <label>Z (m)<input type="number" step="0.05" value={selected.transform?.position.z ?? 0} onChange={(event) => moveTo(selected, { x: selected.transform?.position.x ?? 0, z: Number(event.target.value) })} /></label>
+              <label>X ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.x ?? 0} onChange={(meters) => moveSelectedAxis("x", meters)} /></label>
+              <label>Y ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.elevation ?? 0} onChange={setSelectedElevation} /></label>
+              <label>Z ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.z ?? 0} onChange={(meters) => moveSelectedAxis("z", meters)} /></label>
+            </div>
+            <div className="nudge-row" role="group" aria-label={`Move by ${stepLabel}`}>
+              <span>Move {stepLabel}</span>
+              {([["x", -1, "−X", ArrowLeft], ["x", 1, "+X", ArrowRight], ["z", -1, "−Z", ArrowUp], ["z", 1, "+Z", ArrowDown]] as const).map(([axis, direction, label, Icon]) => (
+                <button key={label} type="button" className="secondary-button" disabled={selected.locked || !selected.transform} aria-label={`Move ${label} by ${stepLabel}`} title={`Move ${label} by ${stepLabel}`} onClick={() => nudgeSelected(axis, direction)}>
+                  <Icon size={14} aria-hidden="true" />{label}
+                </button>
+              ))}
             </div>
             <div className="button-pair">
-              <button className="secondary-button" disabled={selected.locked} onClick={() => changeItem(selected.id, { transform: selected.transform ? { ...selected.transform, rotationY: selected.transform.rotationY + Math.PI / 2 } : { position: { x: project.room.width / 2, z: project.room.length / 2 }, rotationY: Math.PI / 2 } })}><RotateCw size={16} /> Rotate 90°</button>
+              <button className="secondary-button" disabled={selected.locked} onClick={rotateSelected}><RotateCw size={16} /> Rotate 90°</button>
               <button className="secondary-button" onClick={() => changeItem(selected.id, { transform: null })}>Unplace</button>
             </div>
             {selected.locked && <div className="info-note">This provided item is locked. Unlock it in Constraints before moving.</div>}

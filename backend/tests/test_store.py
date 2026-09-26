@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.store import AIStore, SpendGuardError
+from app.store import AIStore, InviteConflictError, InviteStore, SpendGuardError
 
 
 def test_cache_round_trip(tmp_path: Path) -> None:
@@ -26,3 +26,50 @@ def test_aggregate_guard_counts_reservations(tmp_path: Path) -> None:
     with pytest.raises(SpendGuardError):
         store.reserve("two", "test", 0.1)
 
+
+def test_invite_accept_and_revision_conflict(tmp_path: Path) -> None:
+    invites = InviteStore(tmp_path / "store.sqlite")
+    project = {
+        "schemaVersion": 1,
+        "id": "project-one",
+        "name": "Shared dorm",
+        "ownerId": "person-owner",
+        "people": [{"id": "person-owner", "name": "Owner", "color": "#527D68"}],
+        "room": {"mediaAssets": []},
+        "products": [],
+        "items": [],
+    }
+    created = invites.create(project, "Owner", "edit", 24, 2)
+    accepted = invites.accept(created["token"], "Roommate")
+
+    assert accepted["participant_id"].startswith("person-")
+    assert accepted["project"]["people"][-1]["name"] == "Roommate"
+    assert invites.preview(created["token"])["remaining_uses"] == 1
+
+    updated = {**accepted["project"], "name": "Updated dorm"}
+    assert invites.update_project(created["token"], updated, 2) == {"revision": 3}
+    with pytest.raises(InviteConflictError):
+        invites.update_project(created["token"], updated, 2)
+
+
+def test_invite_reuses_a_known_roommate_identity(tmp_path: Path) -> None:
+    invites = InviteStore(tmp_path / "store.sqlite")
+    project = {
+        "schemaVersion": 1,
+        "id": "project-one",
+        "name": "Shared dorm",
+        "ownerId": "person-owner",
+        "people": [
+            {"id": "person-owner", "name": "Owner", "color": "#527D68"},
+            {"id": "person-maya", "name": "Maya", "color": "#D66A4A"},
+        ],
+        "room": {"mediaAssets": []},
+        "products": [],
+        "items": [],
+    }
+    created = invites.create(project, "Owner", "view", 24, 1)
+    accepted = invites.accept(created["token"], "  Maya  ")
+
+    assert accepted["participant_id"] == "person-maya"
+    assert accepted["permission"] == "view"
+    assert len(accepted["project"]["people"]) == 2

@@ -7,8 +7,15 @@ export interface Bounds {
   maxZ: number;
 }
 
+const currencyFormatters = new Map<string, Intl.NumberFormat>();
+
 export function cents(amount: number, currency = "USD") {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount / 100);
+  let formatter = currencyFormatters.get(currency);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat("en-US", { style: "currency", currency });
+    currencyFormatters.set(currency, formatter);
+  }
+  return formatter.format(amount / 100);
 }
 
 export function productFor(project: Project, item: Item): Product | undefined {
@@ -186,7 +193,15 @@ function unresolvedDuplicate(resolution: DuplicateResolution | undefined) {
   return !resolution;
 }
 
-export function calculateIssues(project: Project): Issue[] {
+export interface IssueOptions {
+  /** Formats a meter length for issue text; defaults to meters. */
+  formatLength?: (meters: number) => string;
+}
+
+const formatMeters = (meters: number) => `${meters.toFixed(2)} m`;
+
+/** Geometry-only checks (missing dimensions, placement, boundary, ceiling, clearance, overlap). */
+export function physicalIssues(project: Project, { formatLength = formatMeters }: IssueOptions = {}): Issue[] {
   const issues: Issue[] = [];
   const activeItems = project.items.filter((item) => item.purchaseStatus !== "deferred");
 
@@ -248,7 +263,7 @@ export function calculateIssues(project: Project): Issue[] {
           affectedItemIds: [item.id],
           affectedGeometryIds: [project.room.id],
           message: `${product.name} sinks below the floor`,
-          detail: `Its base sits ${Math.abs(elevation).toFixed(2)} m under the floor.`,
+          detail: `Its base sits ${formatLength(Math.abs(elevation))} under the floor.`,
           suggestedActions: ["Raise item"],
           status: "open",
         });
@@ -263,8 +278,8 @@ export function calculateIssues(project: Project): Issue[] {
           affectedGeometryIds: [project.room.id],
           message: `${product.name} exceeds ceiling height`,
           detail: elevation > VERTICAL_EPSILON
-            ? `Its top reaches ${(elevation + product.dimensions.height).toFixed(2)} m vs a ${project.room.height.toFixed(2)} m ceiling.`
-            : `${product.dimensions.height.toFixed(2)} m item vs ${project.room.height.toFixed(2)} m room.`,
+            ? `Its top reaches ${formatLength(elevation + product.dimensions.height)} vs a ${formatLength(project.room.height)} ceiling.`
+            : `${formatLength(product.dimensions.height)} item vs ${formatLength(project.room.height)} room.`,
           suggestedActions: elevation > VERTICAL_EPSILON ? ["Lower item", "Choose a shorter item"] : ["Choose a shorter item"],
           status: "open",
         });
@@ -314,6 +329,13 @@ export function calculateIssues(project: Project): Issue[] {
       }
     }
   }
+
+  return issues;
+}
+
+export function calculateIssues(project: Project, options: IssueOptions = {}): Issue[] {
+  const issues = physicalIssues(project, options);
+  const activeItems = project.items.filter((item) => item.purchaseStatus !== "deferred");
 
   const subtotal = purchaseSubtotal(project);
   if (!subtotal.complete) {

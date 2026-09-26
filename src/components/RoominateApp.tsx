@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 import { useProjectStore } from "@/hooks/useProjectStore";
+import { UnitPreferencesProvider, useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { calculateIssues, cents, purchaseSubtotal } from "@/lib/calculations";
 import type { Project } from "@/lib/types";
 import { CapturePanel } from "./screens/CapturePanel";
@@ -32,6 +33,7 @@ import { ProductsPanel } from "./screens/ProductsPanel";
 import { ConstraintsPanel } from "./screens/ConstraintsPanel";
 import { IssuesPanel } from "./screens/IssuesPanel";
 import { BetterCartPanel } from "./screens/BetterCartPanel";
+import { InviteDialog, JoinInvite } from "./Collaboration";
 
 type Screen = "capture" | "studio" | "products" | "constraints" | "issues" | "better";
 
@@ -61,6 +63,7 @@ function Dashboard({
   onReset: () => void;
   onRename: (id: string, name: string) => void;
 }) {
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   return (
     <main className="dashboard-page">
       <header className="marketing-header">
@@ -105,6 +108,7 @@ function Dashboard({
                     className="inline-name"
                     value={project.name}
                     aria-label="Project name"
+                    readOnly={project.collaboration?.permission === "view"}
                     onChange={(event) => onRename(project.id, event.target.value)}
                   />
                   <p>Updated {new Date(project.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</p>
@@ -112,11 +116,21 @@ function Dashboard({
                     <span><CircleDollarSign size={15} /> {cents(subtotal.amount)} / {cents(project.budgetAmount)}</span>
                     <span className={issues.some((issue) => issue.severity === "error") ? "warn-text" : "good-text"}><AlertTriangle size={15} /> {issues.length} open</span>
                   </div>
-                  <div className="project-actions">
-                    <button className="primary-button small" onClick={() => onOpen(project.id)}>Open room</button>
-                    <button className="icon-button" title="Duplicate" onClick={() => onDuplicate(project.id)}><Copy size={16} /></button>
-                    {project.id !== "project-demo" && <button className="icon-button danger" title="Delete" onClick={() => onDelete(project.id)}><Trash2 size={16} /></button>}
-                  </div>
+                  {pendingDeleteId === project.id ? (
+                    <div className="delete-confirm" role="alertdialog" aria-labelledby={`delete-${project.id}`} onKeyDown={(event) => { if (event.key === "Escape") setPendingDeleteId(null); }}>
+                      <p id={`delete-${project.id}`}><strong>Delete “{project.name}”?</strong> Its room, cart, and media are removed from this browser. This can’t be undone.</p>
+                      <div>
+                        <button className="secondary-button small" autoFocus onClick={() => setPendingDeleteId(null)}>Cancel</button>
+                        <button className="danger-button small" onClick={() => { onDelete(project.id); setPendingDeleteId(null); }}><Trash2 size={14} /> Delete room</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="project-actions">
+                      <button className="primary-button small" onClick={() => onOpen(project.id)}>Open room</button>
+                      <button className="icon-button" title="Duplicate" aria-label={`Duplicate ${project.name}`} onClick={() => onDuplicate(project.id)}><Copy size={16} /></button>
+                      {project.id !== "project-demo" && <button className="icon-button danger" title="Delete" aria-label={`Delete ${project.name}`} onClick={() => setPendingDeleteId(project.id)}><Trash2 size={16} /></button>}
+                    </div>
+                  )}
                 </div>
               </article>
             );
@@ -133,17 +147,59 @@ function Dashboard({
 }
 
 export function RoominateApp() {
+  return (
+    <UnitPreferencesProvider>
+      <RoominateWorkspace />
+    </UnitPreferencesProvider>
+  );
+}
+
+function RoominateWorkspace() {
   const store = useProjectStore();
+  const units = useUnitPreferences();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [screen, setScreen] = useState<Screen>("studio");
   const [mobileNav, setMobileNav] = useState(false);
-  const [shareNotice, setShareNotice] = useState(false);
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [notice, setNotice] = useState("");
   const [undoProject, setUndoProject] = useState<Project | null>(null);
   const activeProject = store.projects.find((project) => project.id === activeId) ?? null;
-  const issues = useMemo(() => (activeProject ? calculateIssues(activeProject) : []), [activeProject]);
+  const formatLength = units.formatLength;
+  const issues = useMemo(() => (activeProject ? calculateIssues(activeProject, { formatLength }) : []), [activeProject, formatLength]);
   const subtotal = activeProject ? purchaseSubtotal(activeProject) : { amount: 0, complete: true };
 
+  useEffect(() => {
+    setInviteToken(new URL(window.location.href).searchParams.get("invite"));
+  }, []);
+
+  const clearInviteUrl = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("invite");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    setInviteToken(null);
+  };
+
   if (!store.hydrated) return <div className="loading-screen"><span className="brand-mark"><Box /></span><p>Opening your room…</p></div>;
+  if (inviteToken) {
+    return <JoinInvite token={inviteToken} onCancel={clearInviteUrl} onJoined={(accepted) => {
+      const imported: Project = {
+        ...accepted.project,
+        ownerId: accepted.participant_id,
+        collaboration: {
+          token: inviteToken,
+          participantId: accepted.participant_id,
+          permission: accepted.permission,
+          revision: accepted.revision,
+          expiresAt: accepted.expires_at,
+        },
+      };
+      const id = store.importProject(imported);
+      clearInviteUrl();
+      setActiveId(id);
+      setScreen("studio");
+    }} />;
+  }
   if (!activeProject) {
     return (
       <Dashboard
@@ -159,18 +215,13 @@ export function RoominateApp() {
   }
 
   const update = (updater: (project: Project) => Project, captureUndo = false) => {
+    if (activeProject.collaboration?.permission === "view") {
+      setNotice("This invitation is view-only. Ask the owner for an edit link.");
+      window.setTimeout(() => setNotice(""), 2600);
+      return;
+    }
     if (captureUndo) setUndoProject(structuredClone(activeProject));
     store.updateProject(activeProject.id, updater);
-  };
-  const share = async () => {
-    const shareText = `Roominate project: ${activeProject.name} (private demo link)`;
-    try {
-      await navigator.clipboard.writeText(`${shareText}\n${window.location.href}`);
-    } catch {
-      // Clipboard may be unavailable in an insecure local context; the notice remains useful.
-    }
-    setShareNotice(true);
-    window.setTimeout(() => setShareNotice(false), 2200);
   };
 
   return (
@@ -183,12 +234,12 @@ export function RoominateApp() {
           <span className="header-divider" />
           <div>
             <strong className="project-title">{activeProject.name}</strong>
-            <span className={`save-state ${store.saveState}`}>{store.saveState === "saved" ? <Check size={12} /> : null}{store.saveState}</span>
+            {activeProject.collaboration?.permission === "view" ? <span className="save-state saved"><Users size={12} />view only</span> : <span className={`save-state ${store.saveState}`}>{store.saveState === "saved" ? <Check size={12} /> : null}{store.saveState}</span>}
           </div>
         </div>
         <div className="header-actions">
           {undoProject && <button className="secondary-button compact-button" onClick={() => { update(() => undoProject); setUndoProject(null); }}><RotateCcw size={15} /> Undo</button>}
-          <button className="secondary-button compact-button" onClick={share}><Share2 size={15} /><span className="desktop-only">Share</span></button>
+          <button className="secondary-button compact-button" onClick={() => setInviteOpen(true)}><Share2 size={15} /><span className="desktop-only">Share</span></button>
           <div className="avatars" aria-label="Collaborators">
             {activeProject.people.map((person) => <span key={person.id} style={{ background: person.color }} title={person.name}>{person.name[0]}</span>)}
           </div>
@@ -226,8 +277,8 @@ export function RoominateApp() {
           return <button key={item.id} className={screen === item.id ? "active" : ""} onClick={() => setScreen(item.id)}><Icon size={18} /><span>{item.label.replace("3D ", "")}</span>{item.id === "issues" && issues.length > 0 && <b>{issues.length}</b>}</button>;
         })}
       </nav>
-      {shareNotice && <div className="toast"><Check size={16} /> Private project link copied</div>}
+      {inviteOpen && <InviteDialog project={activeProject} onClose={() => setInviteOpen(false)} onProjectChange={(project) => store.updateProject(activeProject.id, () => project)} />}
+      {notice && <div className="toast"><AlertTriangle size={16} /> {notice}</div>}
     </div>
   );
 }
-
