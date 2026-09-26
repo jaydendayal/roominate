@@ -276,7 +276,8 @@ export function createDemoProject(): Project {
     },
     products: structuredClone(demoProducts),
     items: structuredClone(demoItems),
-    budgetAmount: 45000,
+    // $400 keeps the cart over budget after the rule/duplicate fixes, so Better Cart demonstrates a substitution.
+    budgetAmount: 40000,
     budgetCurrency: "USD",
     priorities: ["Stay under budget", "Keep a clear entry", "Preserve workspace"],
     needs: ["workspace", "seating", "storage"],

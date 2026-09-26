@@ -138,6 +138,9 @@ input, select { color: var(--ink); }
 .ai-explanation { display: flex; gap: 6px; align-items: flex-start; background: #f4f1fa; color: #4d4566 !important; border-radius: 7px; padding: 6px 8px; margin: 4px 0 6px !important; }
 .ai-explanation svg { flex: 0 0 auto; margin-top: 2px; }
 .better-empty-page .header-button-row { flex-wrap: wrap; justify-content: center; }
+.proposal-blockers { margin-top: 12px; border: 1px solid #ecd8a6; background: #fdf7e7; color: #6f5418; border-radius: 10px; padding: 10px 12px; font-size: 10px; line-height: 1.45; }
+.proposal-blockers strong { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink); }
+.proposal-blockers ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
 .item-stack { display: grid; gap: 5px; overflow: auto; margin-bottom: 12px; }
 .room-item-row { width: 100%; border: 1px solid transparent; border-radius: 10px; background: transparent; padding: 8px; display: flex; align-items: center; gap: 9px; text-align: left; }
 .room-item-row:hover { background: #f5f3ed; }

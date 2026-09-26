@@ -70,7 +70,7 @@ The seeded demo deliberately derives these issues from fixture geometry and reco
 - an owned roommate shelf blocking the confirmed entry-door swing
 - two roommates planning microwaves for the same shared need
 - an open-coil heater matching a confirmed user-entered housing rule
-- a $595 known subtotal against a $450 group budget
+- a $595 known subtotal against a $400 group budget
 - unplaced cart products whose fit remains unverified
 
 Generate Better Cart to collision-test a compact desk placement, coordinate/defer the duplicate, remove the rule-conflicting heater, and reposition the shelf. With every proposal action accepted, deterministic tests verify a $327 subtotal and resolution of fit, clearance, budget, duplicate, and rule issues; the remaining unplaced microwave is correctly still reported as fit-unverified.

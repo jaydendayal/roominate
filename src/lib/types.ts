@@ -187,6 +187,8 @@ export interface Proposal {
   changes: ProposalChange[];
   resolvedIssueIds: string[];
   remainingIssueIds: string[];
+  /** Problems no automatic change could solve, with what the group could change, measure, or decide. */
+  blockers?: string[];
   createdAt: string;
   stale: boolean;
 }

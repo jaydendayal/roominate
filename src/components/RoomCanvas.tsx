@@ -6,7 +6,7 @@ import { OrbitControls, Text } from "@react-three/drei";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
-import { itemHasConflict, productFor } from "@/lib/calculations";
+import { calculateIssues, itemHasConflict, productFor } from "@/lib/calculations";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
 import { gridOptions } from "@/lib/units";
 
@@ -88,7 +88,8 @@ function FurnitureItem({
   issues,
   selected,
   onSelect,
-  onMove,
+  onDrag,
+  onDragEnd,
   setDragging,
 }: {
   project: Project;
@@ -96,7 +97,10 @@ function FurnitureItem({
   issues: Issue[];
   selected: boolean;
   onSelect?: (id: string) => void;
-  onMove?: (id: string, position: Vec2) => void;
+  /** Live preview while the pointer moves; not persisted. */
+  onDrag?: (id: string, position: Vec2) => void;
+  /** Called once on release with the final position, or null if the drag was cancelled or never moved. */
+  onDragEnd?: (id: string, position: Vec2 | null) => void;
   setDragging: (dragging: boolean) => void;
 }) {
   const { camera, gl } = useThree();
@@ -113,12 +117,13 @@ function FurnitureItem({
   const startDrag = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
     onSelect?.(item.id);
-    if (!onMove || item.locked) return;
+    if (!onDragEnd || item.locked) return;
     activePointer.current = event.pointerId;
     setDragging(true);
     const raycaster = new THREE.Raycaster();
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const point = new THREE.Vector3();
+    let last: Vec2 | null = null;
     const move = (pointerEvent: PointerEvent) => {
       if (pointerEvent.pointerId !== activePointer.current) return;
       const rect = gl.domElement.getBoundingClientRect();
@@ -128,21 +133,28 @@ function FurnitureItem({
       );
       raycaster.setFromCamera(mouse, camera);
       if (raycaster.ray.intersectPlane(plane, point)) {
-        onMove(item.id, {
+        last = {
           x: Math.max(-0.5, Math.min(project.room.width + 0.5, point.x)),
           z: Math.max(-0.5, Math.min(project.room.length + 0.5, point.z)),
-        });
+        };
+        onDrag?.(item.id, last);
       }
     };
-    const stop = (pointerEvent: PointerEvent) => {
+    const finish = (pointerEvent: PointerEvent, commit: boolean) => {
       if (pointerEvent.pointerId !== activePointer.current) return;
       activePointer.current = null;
       setDragging(false);
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", cancel);
+      // Persist once per drag instead of on every pointer move.
+      onDragEnd(item.id, commit ? last : null);
     };
+    const release = (pointerEvent: PointerEvent) => finish(pointerEvent, true);
+    const cancel = (pointerEvent: PointerEvent) => finish(pointerEvent, false);
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", cancel);
   };
 
   return (
@@ -170,9 +182,20 @@ function FurnitureItem({
   );
 }
 
-function Scene({ project, issues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, gridSize }: RoomCanvasProps & { gridSize: number }) {
+function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, gridSize }: RoomCanvasProps & { gridSize: number }) {
   const controls = useRef<OrbitControlsImpl | null>(null);
   const [dragging, setDragging] = useState(false);
+  // While dragging, render a local preview (with live conflict colors) and save only on release.
+  const [preview, setPreview] = useState<{ itemId: string; position: Vec2 } | null>(null);
+  const project = useMemo(() => preview ? {
+    ...savedProject,
+    items: savedProject.items.map((item) => item.id === preview.itemId && item.transform ? { ...item, transform: { ...item.transform, position: preview.position } } : item),
+  } : savedProject, [preview, savedProject]);
+  const issues = useMemo(() => (preview ? calculateIssues(project) : savedIssues), [preview, project, savedIssues]);
+  const endDrag = (itemId: string, position: Vec2 | null) => {
+    setPreview(null);
+    if (position) onMoveItem?.(itemId, position);
+  };
   const wallColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex ?? "#e7dfd0";
   const floorColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("floor"))?.hex ?? "#a77f59";
   const center = useMemo(() => new THREE.Vector3(project.room.width / 2, 0.55, project.room.length / 2), [project.room.length, project.room.width]);
@@ -223,7 +246,8 @@ function Scene({ project, issues, selectedItemId, onSelectItem, onMoveItem, cuta
           issues={issues}
           selected={selectedItemId === item.id}
           onSelect={onSelectItem}
-          onMove={onMoveItem}
+          onDrag={onMoveItem ? (itemId, position) => setPreview({ itemId, position }) : undefined}
+          onDragEnd={onMoveItem ? endDrag : undefined}
           setDragging={setDragging}
         />
       ))}
