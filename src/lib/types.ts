@@ -22,6 +22,19 @@ export interface Dimensions {
   height: number | null;
 }
 
+export interface FurnitureVisualPart {
+  primitive: "box" | "cylinder" | "sphere" | "cone";
+  role: "body" | "top" | "seat" | "back" | "arm" | "leg" | "base" | "door" | "drawer" | "shelf" | "cushion" | "shade" | "handle" | "other";
+  /** Normalized center within the collision box: X width, Y vertical, Z depth. */
+  position: { x: number; y: number; z: number };
+  /** Fractions of the confirmed width, height, and depth respectively. */
+  size: { x: number; y: number; z: number };
+  /** Euler rotation in degrees around the part's local X/Y/Z axes. */
+  rotation: { x: number; y: number; z: number };
+  material: "wood" | "fabric" | "metal" | "plastic" | "glass" | "mixed";
+  colorHex: string | null;
+}
+
 export interface FurnitureVisualProfile {
   archetype: "chair" | "couch" | "desk" | "wardrobe" | "hamper" | "beanbag" | "ottoman" | "dresser" | "lamp" | "mirror" | "mini_fridge" | "box";
   style: "modern" | "traditional" | "industrial" | "minimal" | "soft" | "utility";
@@ -33,6 +46,8 @@ export interface FurnitureVisualProfile {
   colorHex: string | null;
   confidence: number;
   evidence: string;
+  /** Optional image- or description-derived primitives; older saved profiles fall back to their archetype. */
+  parts?: FurnitureVisualPart[];
 }
 
 export interface Evidence {

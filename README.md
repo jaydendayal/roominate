@@ -11,7 +11,8 @@ The repository is a working vertical slice built from the supplied PRD:
 - local development persistence with a resettable full-flow demo
 - browser-based guided room capture with six viewpoints, quality feedback, and a measured scale reference
 - dimension-scaled procedural 3D models for chairs, couches, desks, wardrobes, hampers, beanbags, ottomans, dressers, lamps, mirrors, and mini fridges
-- schema-constrained OpenAI visual profiles that map product names to safe procedural archetypes and style variants
+- schema-constrained OpenAI visual profiles that turn product pictures or descriptions into bounded primitive parts, with safe procedural archetypes as a fallback
+- a built-in 59-item IKEA/Amazon furnishing shortlist with placement dimensions, reviewable pricing evidence, and direct retailer links
 - collision-tested Better Cart actions with individual accept/reject and undo
 - optional Amazon Creators API discovery with deterministic room-fit screening
 - retailer-grouped cart handoff without collecting payment details

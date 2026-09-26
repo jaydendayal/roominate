@@ -83,6 +83,14 @@ test("product picture creates a preview model and places the confirmed item", as
           archetype: "chair", style: "modern", material: "fabric", silhouette: "rounded",
           has_arms: true, has_back: true, leg_style: "four_leg", color_hex: "#A65E45",
           confidence: 0.91, evidence: "Visible upholstered chair with arms and four legs",
+          parts: [
+            { primitive: "box", role: "seat", position: { x: 0, y: -0.08, z: 0 }, size: { x: 0.72, y: 0.12, z: 0.64 }, rotation: { x: 0, y: 0, z: 0 }, material: "fabric", color_hex: "#A65E45" },
+            { primitive: "box", role: "back", position: { x: 0, y: 0.25, z: -0.27 }, size: { x: 0.72, y: 0.42, z: 0.1 }, rotation: { x: 0, y: 0, z: 0 }, material: "fabric", color_hex: "#A65E45" },
+            { primitive: "box", role: "leg", position: { x: -0.28, y: -0.34, z: -0.23 }, size: { x: 0.08, y: 0.32, z: 0.08 }, rotation: { x: 0, y: 0, z: 0 }, material: "wood", color_hex: "#5D3B2E" },
+            { primitive: "box", role: "leg", position: { x: 0.28, y: -0.34, z: -0.23 }, size: { x: 0.08, y: 0.32, z: 0.08 }, rotation: { x: 0, y: 0, z: 0 }, material: "wood", color_hex: "#5D3B2E" },
+            { primitive: "box", role: "leg", position: { x: -0.28, y: -0.34, z: 0.23 }, size: { x: 0.08, y: 0.32, z: 0.08 }, rotation: { x: 0, y: 0, z: 0 }, material: "wood", color_hex: "#5D3B2E" },
+            { primitive: "box", role: "leg", position: { x: 0.28, y: -0.34, z: 0.23 }, size: { x: 0.08, y: 0.32, z: 0.08 }, rotation: { x: 0, y: 0, z: 0 }, material: "wood", color_hex: "#5D3B2E" },
+          ],
         },
       },
     }),
@@ -108,8 +116,26 @@ test("product picture creates a preview model and places the confirmed item", as
     const project = stored.projects?.find((candidate: { products: Array<{ name: string }> }) => candidate.products.some((product) => product.name === "Photo Chair"));
     const product = project?.products.find((candidate: { name: string }) => candidate.name === "Photo Chair");
     const item = project?.items.find((candidate: { productId: string }) => candidate.productId === product?.id);
-    return { archetype: product?.visualProfile?.archetype, placed: Boolean(item?.transform) };
-  })).toEqual({ archetype: "chair", placed: true });
+    return { archetype: product?.visualProfile?.archetype, parts: product?.visualProfile?.parts?.length, placed: Boolean(item?.transform) };
+  })).toEqual({ archetype: "chair", parts: 6, placed: true });
+});
+
+test("shortlist library items are placed into the 3D room when added", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific library placement flow");
+  await page.getByRole("button", { name: "Open room" }).first().click();
+  await page.getByRole("button", { name: "Products" }).first().click();
+  await page.getByPlaceholder("Search products, categories, stores…").fill("MARKUS");
+  const card = page.locator("article.product-card").filter({ hasText: "MARKUS" });
+  await expect(card).toBeVisible();
+  await card.getByRole("button", { name: /^Add$/ }).click();
+  await page.getByRole("button", { name: "3D Studio" }).first().click();
+  await expect(page.getByRole("button", { name: /MARKUS/ })).toContainText("placed");
+  await expect.poll(() => page.evaluate(() => {
+    const stored = JSON.parse(localStorage.getItem("roominate.projects.v1") ?? "{}");
+    const project = stored.projects?.find((candidate: { id: string }) => candidate.id === "project-demo");
+    const item = project?.items.find((candidate: { productId: string }) => candidate.productId === "shortlist-markus");
+    return Boolean(item?.transform?.position);
+  })).toBe(true);
 });
 
 test("room analysis turns detected structure into reviewable 3D features", async ({ page }, testInfo) => {
