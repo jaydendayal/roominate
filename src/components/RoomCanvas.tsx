@@ -64,9 +64,9 @@ function FloorGrid({ width, length, cell }: { width: number; length: number; cel
 }
 
 function GridScaleLegend() {
-  const { unitSystem, gridSize, setGridSize } = useUnitPreferences();
+  const { unitSystem, setUnitSystem, gridSize, setGridSize } = useUnitPreferences();
   return (
-    <div className="grid-scale" role="group" aria-label="Grid scale">
+    <div className="grid-scale" role="group" aria-label="Grid scale and units">
       <span className="grid-scale-swatch" aria-hidden="true" />
       <label>
         <span>1 square =</span>
@@ -74,6 +74,10 @@ function GridScaleLegend() {
           {gridOptions[unitSystem].map((option) => <option key={option.label} value={option.meters}>{option.label}</option>)}
         </select>
       </label>
+      <div className="unit-toggle" role="group" aria-label="Distance units">
+        <button type="button" aria-pressed={unitSystem === "imperial"} aria-label="Imperial (feet and inches)" title="Imperial (feet and inches)" onClick={() => setUnitSystem("imperial")}>ft</button>
+        <button type="button" aria-pressed={unitSystem === "metric"} aria-label="Metric (meters and centimeters)" title="Metric (meters and centimeters)" onClick={() => setUnitSystem("metric")}>m</button>
+      </div>
     </div>
   );
 }
