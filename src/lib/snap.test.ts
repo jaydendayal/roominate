@@ -38,17 +38,19 @@ describe("snap to grid", () => {
 
   it("uses the rotated footprint of the item", () => {
     const demo = createDemoProject();
-    // Desk is 1.52 x 0.76; rotated 90 degrees its x-extent is 0.76.
+    // The LAGKAPTEN / ALEX desk is about 1.40 x 0.60 m; rotated 90 degrees its x-extent is its depth.
+    const desk = demo.products.find((product) => product.id === "shortlist-lagkapten-alex")!.dimensions;
     const rotated = snapItemPosition(demo, "item-desk", { x: 1.43, y: 1.5 }, 0.5, Math.PI / 2);
-    expect(rotated.x - 0.38).toBeCloseTo(1, 6);
+    // Snapped positions are rounded to 0.1 mm, so edges land within 0.1 mm of the line.
+    expect(rotated.x - desk.depth! / 2).toBeCloseTo(1, 3); // near edge on the 1.0 m line
     const unrotated = snapItemPosition(demo, "item-desk", { x: 1.43, y: 1.5 }, 0.5, 0);
-    expect(unrotated.x - 0.76).toBeCloseTo(0.5, 6);
+    expect(unrotated.x + desk.width! / 2).toBeCloseTo(2, 3); // far edge on the 2.0 m line
   });
 
   it("leaves the position alone for unknown dimensions or a missing grid", () => {
     expect(snapPosition({ x: 1.234, y: 2.345 }, { width: 1, depth: 1 }, 0, room)).toEqual({ x: 1.234, y: 2.345 });
     const demo = createDemoProject();
-    demo.products = demo.products.map((product) => product.id === "prod-chair" ? { ...product, dimensions: { width: null, depth: null, height: null } } : product);
+    demo.products = demo.products.map((product) => product.id === "shortlist-flintan" ? { ...product, dimensions: { width: null, depth: null, height: null } } : product);
     expect(snapItemPosition(demo, "item-chair", { x: 1.234, y: 2.345 }, 0.5)).toEqual({ x: 1.234, y: 2.345 });
   });
 });
