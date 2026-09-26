@@ -31,6 +31,11 @@ class Settings:
     output_cost_per_million: float
     database_path: Path
     allowed_origins: tuple[str, ...]
+    amazon_credential_id: str | None
+    amazon_credential_secret: str | None
+    amazon_credential_version: str
+    amazon_partner_tag: str | None
+    amazon_marketplace: str
 
 
 def get_settings() -> Settings:
@@ -50,5 +55,9 @@ def get_settings() -> Settings:
         output_cost_per_million=max(0.0, _float("OPENAI_OUTPUT_COST_PER_1M", 1.60)),
         database_path=Path(os.getenv("ROOMINATE_AI_DB", str(backend_root / "data" / "ai_cache.sqlite"))),
         allowed_origins=tuple(origin.strip() for origin in raw_origins.split(",") if origin.strip()),
+        amazon_credential_id=os.getenv("AMAZON_CREATORS_CREDENTIAL_ID") or None,
+        amazon_credential_secret=os.getenv("AMAZON_CREATORS_CREDENTIAL_SECRET") or None,
+        amazon_credential_version=os.getenv("AMAZON_CREATORS_CREDENTIAL_VERSION", "3.1"),
+        amazon_partner_tag=os.getenv("AMAZON_ASSOCIATE_PARTNER_TAG") or None,
+        amazon_marketplace=os.getenv("AMAZON_MARKETPLACE", "www.amazon.com"),
     )
-

@@ -1,10 +1,12 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { AlertCircle, Box, Check, ExternalLink, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Trash2, Upload } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { AlertCircle, Box, Check, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Sparkles, Store, Trash2, Upload } from "lucide-react";
+import { apiFetch, normalizeImageUpload } from "@/lib/api";
 import { cents, productFor } from "@/lib/calculations";
-import type { Evidence, Issue, Product, Project } from "@/lib/types";
+import type { Evidence, FurnitureVisualProfile, Issue, Product, Project } from "@/lib/types";
+import { ShoppingDiscovery } from "./ShoppingDiscovery";
+import { RetailerCheckout } from "./RetailerCheckout";
 
 interface ProductDraft {
   name: string;
@@ -19,6 +21,20 @@ interface ProductDraft {
   source: "url" | "screenshot";
   screenshotDataUrl?: string;
   message?: string;
+  visualProfile?: FurnitureVisualProfile;
+}
+
+interface APIVisualProfile {
+  archetype: FurnitureVisualProfile["archetype"];
+  style: FurnitureVisualProfile["style"];
+  material: FurnitureVisualProfile["material"];
+  silhouette: FurnitureVisualProfile["silhouette"];
+  has_arms: boolean;
+  has_back: boolean;
+  leg_style: FurnitureVisualProfile["legStyle"];
+  color_hex: string | null;
+  confidence: number;
+  evidence: string;
 }
 
 interface ProductExtractionResponse {
@@ -32,7 +48,18 @@ interface ProductExtractionResponse {
     variant: string | null;
     dimensions: { width_m: number | null; depth_m: number | null; height_m: number | null };
     price: { amount_cents: number; currency: "USD" } | null;
+    visual_profile: APIVisualProfile;
   };
+}
+
+interface VisualProfileResponse {
+  status: "complete" | "partial" | "manual_fallback" | "cached";
+  message: string;
+  visual_profile: APIVisualProfile;
+}
+
+function visualProfile(profile: APIVisualProfile): FurnitureVisualProfile {
+  return { archetype: profile.archetype, style: profile.style, material: profile.material, silhouette: profile.silhouette, hasArms: profile.has_arms, hasBack: profile.has_back, legStyle: profile.leg_style, colorHex: profile.color_hex, confidence: profile.confidence, evidence: profile.evidence };
 }
 
 const blankDraft = (source: "url" | "screenshot", sourceURL = ""): ProductDraft => ({ name: "", store: "", sourceURL, category: "", variant: "", width: "", depth: "", height: "", price: "", source });
@@ -50,18 +77,20 @@ function extractedDraft(result: ProductExtractionResponse, source: "url" | "scre
     price: result.product.price ? (result.product.price.amount_cents / 100).toFixed(2) : "",
     source,
     screenshotDataUrl,
+    visualProfile: visualProfile(result.product.visual_profile),
     message: result.message,
   };
 }
 
 export function ProductsPanel({ project, issues, update }: { project: Project; issues: Issue[]; update: (updater: (project: Project) => Project) => void }) {
-  const [tab, setTab] = useState<"catalog" | "import" | "cart">("catalog");
+  const [tab, setTab] = useState<"catalog" | "shop" | "import" | "cart" | "checkout">("catalog");
   const [importType, setImportType] = useState<"url" | "screenshot">("url");
   const [url, setUrl] = useState("");
   const [draft, setDraft] = useState<ProductDraft | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [visualLoading, setVisualLoading] = useState(false);
   const shownProducts = useMemo(() => project.products.filter((product) => `${product.name} ${product.category} ${product.store}`.toLowerCase().includes(search.toLowerCase())), [project.products, search]);
 
   const changeProject = (updater: (current: Project) => Project) => update((current) => {
@@ -92,23 +121,42 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
     if (!file) return;
     setStatus("loading");
     setError("");
-    const screenshotDataUrl = file.size < 3_000_000 ? await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    }) : undefined;
     try {
+      const normalizedFile = await normalizeImageUpload(file);
+      const screenshotDataUrl = normalizedFile.size < 3_000_000 ? await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsDataURL(normalizedFile);
+      }) : undefined;
       const form = new FormData();
       form.set("project_id", project.id);
-      form.set("file", file);
+      form.set("file", normalizedFile);
       const result = await apiFetch<ProductExtractionResponse>("/api/v1/extract-product/screenshot", { method: "POST", body: form });
       setDraft(extractedDraft(result, "screenshot", "", screenshotDataUrl));
       setStatus("idle");
     } catch (caught) {
-      setDraft({ ...blankDraft("screenshot"), screenshotDataUrl, message: "Automated extraction is unavailable. The screenshot is retained beside this editable form." });
+      setDraft({ ...blankDraft("screenshot"), message: "Automated extraction is unavailable. Add the visible fields manually." });
       setError(caught instanceof Error ? caught.message : "Extraction unavailable");
       setStatus("error");
+    }
+  };
+
+  const generateVisual = async () => {
+    if (!draft?.name.trim()) return;
+    setVisualLoading(true);
+    setError("");
+    try {
+      const result = await apiFetch<VisualProfileResponse>("/api/v1/product-visual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: project.id, name: draft.name.trim(), category: draft.category.trim() || null, variant: draft.variant.trim() || null }),
+      });
+      setDraft((current) => current ? { ...current, visualProfile: visualProfile(result.visual_profile), message: result.message } : current);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "3D styling unavailable");
+    } finally {
+      setVisualLoading(false);
     }
   };
 
@@ -123,6 +171,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       store: draft.store.trim() || "Unknown store",
       sourceURL: draft.sourceURL.trim() || null,
       screenshotDataUrl: draft.screenshotDataUrl,
+      visualProfile: draft.visualProfile,
       category: draft.category.trim().toLowerCase() || "uncategorized",
       variant: draft.variant.trim(),
       dimensions: { width: draft.width ? Number(draft.width) : null, depth: draft.depth ? Number(draft.depth) : null, height: draft.height ? Number(draft.height) : null },
@@ -138,6 +187,12 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
 
   const addProduct = (product: Product) => changeProject((current) => ({ ...current, items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: product.id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.tags.slice(0, 1), transform: null, placementType: "floor" }] }));
 
+  const addDiscoveredProduct = (product: Product, placement: { position: { x: number; z: number }; rotationY: number } | null) => changeProject((current) => ({
+    ...current,
+    products: current.products.some((candidate) => candidate.id === product.id) ? current.products.map((candidate) => candidate.id === product.id ? product : candidate) : [...current.products, product],
+    items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: product.id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.tags.slice(0, 1), transform: placement, placementType: "floor" }],
+  }));
+
   const cartItems = project.items.filter((item) => item.purchaseStatus === "in_cart");
   return (
     <div className="flow-page products-page">
@@ -147,9 +202,12 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       </header>
       <div className="segment-tabs">
         <button className={tab === "catalog" ? "active" : ""} onClick={() => setTab("catalog")}><Box size={16} /> Library <span>{project.products.length}</span></button>
+        <button className={tab === "shop" ? "active" : ""} onClick={() => setTab("shop")}><Store size={16} /> Shop</button>
         <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload size={16} /> Import</button>
-        <button className={tab === "cart" ? "active" : ""} onClick={() => setTab("cart")}><ShoppingCart size={16} /> Group cart <span>{cartItems.length}</span></button>
+        <button className={tab === "cart" || tab === "checkout" ? "active" : ""} onClick={() => setTab("cart")}><ShoppingCart size={16} /> Group cart <span>{cartItems.length}</span></button>
       </div>
+
+      {tab === "shop" && <ShoppingDiscovery project={project} onAdd={(product, placement) => { addDiscoveredProduct(product, placement); setTab("cart"); }} onImport={() => setTab("import")} />}
 
       {tab === "catalog" && <section className="panel-surface catalog-panel">
         <div className="catalog-toolbar"><div className="search-box"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search products, categories, stores…" /></div><span>{shownProducts.length} products</span></div>
@@ -168,7 +226,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       {tab === "import" && <div className="import-grid">
         <section className="panel-surface import-source">
           <div className="import-type-tabs"><button className={importType === "url" ? "active" : ""} onClick={() => { setImportType("url"); setDraft(null); }}><Link2 size={17} /> Product URL</button><button className={importType === "screenshot" ? "active" : ""} onClick={() => { setImportType("screenshot"); setDraft(null); }}><ImagePlus size={17} /> Screenshot</button></div>
-          {importType === "url" ? <form onSubmit={(event) => void analyzeUrl(event)} className="source-form"><div className="source-icon"><Link2 size={23} /></div><h2>Paste a product link</h2><p>We’ll read available page evidence. Blocked or missing fields stay blank for you to confirm.</p><label>Product URL<input required type="url" placeholder="https://store.com/product" value={url} onChange={(event) => setUrl(event.target.value)} /></label><button className="primary-button full" disabled={status === "loading"}>{status === "loading" ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />} Extract product details</button></form> : <div className="source-form"><div className="source-icon"><ImagePlus size={23} /></div><h2>Upload a screenshot</h2><p>Visible fields become an editable draft. A screenshot never implies a live price.</p><label className="screenshot-dropzone"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void analyzeScreenshot(event.target.files?.[0] ?? null)} /><Upload size={23} /><strong>Choose product screenshot</strong><small>PNG, JPEG, or WebP</small></label>{status === "loading" && <div className="loading-row"><LoaderCircle className="spin" size={17} /> Reading visible details…</div>}</div>}
+          {importType === "url" ? <form onSubmit={(event) => void analyzeUrl(event)} className="source-form"><div className="source-icon"><Link2 size={23} /></div><h2>Paste a product link</h2><p>We’ll read available page evidence. Blocked or missing fields stay blank for you to confirm.</p><label>Product URL<input required type="url" placeholder="https://store.com/product" value={url} onChange={(event) => setUrl(event.target.value)} /></label><button className="primary-button full" disabled={status === "loading"}>{status === "loading" ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />} Extract product details</button></form> : <div className="source-form"><div className="source-icon"><ImagePlus size={23} /></div><h2>Upload a screenshot</h2><p>Visible fields become an editable draft. A screenshot never implies a live price.</p><label className="screenshot-dropzone"><input type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif" onChange={(event) => void analyzeScreenshot(event.target.files?.[0] ?? null)} /><Upload size={23} /><strong>Choose product screenshot</strong><small>HEIC, HEIF, PNG, JPEG, or WebP</small></label>{status === "loading" && <div className="loading-row"><LoaderCircle className="spin" size={17} /> Reading visible details…</div>}</div>}
           {error && <div className="analysis-message error"><AlertCircle size={16} />{error}. Manual entry is still available.</div>}
         </section>
 
@@ -178,11 +236,12 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
             {draft.screenshotDataUrl && <img className="draft-screenshot" src={draft.screenshotDataUrl} alt="Uploaded product evidence" />}
             {draft.message && <div className="info-note">{draft.message}</div>}
             <div className="form-grid">
-              <label className="span-2">Name *<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Product name" /></label>
+              <label className="span-2">Name *<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value, visualProfile: undefined })} placeholder="Product name" /></label>
               <label>Store<input value={draft.store} onChange={(event) => setDraft({ ...draft, store: event.target.value })} placeholder="Unknown" /></label>
-              <label>Category<input value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} placeholder="e.g. desk" /></label>
-              <label className="span-2">Variant<input value={draft.variant} onChange={(event) => setDraft({ ...draft, variant: event.target.value })} placeholder="Size / color" /></label>
+              <label>Category<input value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value, visualProfile: undefined })} placeholder="e.g. desk" /></label>
+              <label className="span-2">Variant<input value={draft.variant} onChange={(event) => setDraft({ ...draft, variant: event.target.value, visualProfile: undefined })} placeholder="Size / color" /></label>
             </div>
+            <div className="visual-profile-box"><span><Sparkles size={16} /><span><strong>{draft.visualProfile ? `${draft.visualProfile.style} ${draft.visualProfile.archetype.replaceAll("_", " ")}` : "Choose its 3D appearance"}</strong><small>{draft.visualProfile ? `${draft.visualProfile.material} · ${draft.visualProfile.silhouette} · ${Math.round(draft.visualProfile.confidence * 100)}% confidence` : "OpenAI selects from safe procedural model options using the name."}</small></span></span><button className="secondary-button small" disabled={!draft.name.trim() || visualLoading} onClick={() => void generateVisual()}>{visualLoading ? <LoaderCircle className="spin" size={14} /> : <Sparkles size={14} />} {draft.visualProfile ? "Regenerate" : "Generate style"}</button></div>
             <h3 className="form-subheading">Dimensions <small>meters</small></h3>
             <div className="form-grid three"><label>Width<input type="number" step="0.01" min="0" value={draft.width} onChange={(event) => setDraft({ ...draft, width: event.target.value })} placeholder="Unknown" /></label><label>Depth<input type="number" step="0.01" min="0" value={draft.depth} onChange={(event) => setDraft({ ...draft, depth: event.target.value })} placeholder="Unknown" /></label><label>Height<input type="number" step="0.01" min="0" value={draft.height} onChange={(event) => setDraft({ ...draft, height: event.target.value })} placeholder="Unknown" /></label></div>
             <div className="form-grid"><label>Observed price (USD)<input type="number" step="0.01" min="0" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} placeholder="Unknown" /></label><label>Source URL<input type="url" value={draft.sourceURL} onChange={(event) => setDraft({ ...draft, sourceURL: event.target.value })} placeholder="Optional" /></label></div>
@@ -193,7 +252,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       </div>}
 
       {tab === "cart" && <section className="panel-surface cart-panel">
-        <div className="panel-heading"><div><p className="eyebrow">Shared group cart</p><h2>Who’s bringing what</h2></div><span className="source-chip confirmed">{project.people.length} collaborators</span></div>
+        <div className="panel-heading"><div><p className="eyebrow">Shared group cart</p><h2>Who’s bringing what</h2></div><div className="cart-heading-actions"><span className="source-chip confirmed">{project.people.length} collaborators</span><button className="primary-button small" disabled={!cartItems.length} onClick={() => setTab("checkout")}><ShoppingCart size={14} /> Checkout by store</button></div></div>
         <div className="cart-table">
           <div className="cart-table-head"><span>Item</span><span>Buyer</span><span>Fit</span><span>Price</span><span /></div>
           {cartItems.map((item) => {
@@ -205,6 +264,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
         </div>
         {!cartItems.length && <div className="empty-state"><ShoppingCart size={28} /><h3>The group cart is empty</h3><button className="secondary-button" onClick={() => setTab("catalog")}>Browse library</button></div>}
       </section>}
+      {tab === "checkout" && <RetailerCheckout project={project} issues={issues} onBack={() => setTab("cart")} />}
     </div>
   );
 }
