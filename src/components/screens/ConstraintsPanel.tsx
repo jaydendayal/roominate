@@ -6,6 +6,7 @@ import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { cents, productFor, purchaseSubtotal } from "@/lib/calculations";
 import type { HousingRule, Product, Project } from "@/lib/types";
 import { fromUnit } from "@/lib/units";
+import { personTone } from "../personTones";
 
 export function ConstraintsPanel({ project, update }: { project: Project; update: (updater: (project: Project) => Project) => void }) {
   const [inventoryOpen, setInventoryOpen] = useState(false);
@@ -97,7 +98,10 @@ export function ConstraintsPanel({ project, update }: { project: Project; update
             <label>Item name<input name="name" required placeholder="Mini fridge" /></label><label>Category<input name="category" required placeholder="appliance" /></label><label>Owner<select name="owner">{project.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label><label>Status<select name="status"><option value="owned">Owned</option><option value="planned">Planned</option><option value="tentative">Tentative</option></select></label><label>Width ({units.objectUnit})<input name="width" required type="number" min="0.1" step="0.1" /></label><label>Depth ({units.objectUnit})<input name="depth" required type="number" min="0.1" step="0.1" /></label><label>Height ({units.objectUnit})<input name="height" required type="number" min="0.1" step="0.1" /></label><button className="primary-button" type="submit">Add to room</button>
           </form>}
           <div className="people-row">
-            {project.people.map((person) => <div className="person-chip" key={person.id}><i style={{ background: person.color }}>{person.name[0]}</i><span><strong>{person.name}</strong><small>{person.id === project.ownerId ? "Project owner" : "Can edit inventory"}</small></span></div>)}
+            {project.people.map((person) => {
+              const tone = personTone(project, person.id);
+              return <div className="person-chip" key={person.id}><i style={{ background: tone.fill, color: tone.mark }}>{person.name[0]}</i><span><strong>{person.name}</strong><small>{person.id === project.ownerId ? "Project owner" : "Can edit inventory"}</small></span></div>;
+            })}
             <form className="add-person" onSubmit={(event) => { event.preventDefault(); if (!personName.trim()) return; mutate((current) => ({ ...current, people: [...current.people, { id: `person-${crypto.randomUUID()}`, name: personName.trim(), color: "#7c7296" }] })); setPersonName(""); }}><UserPlus size={16} /><input aria-label="Roommate name" placeholder="Invite by name" value={personName} onChange={(event) => setPersonName(event.target.value)} /></form>
           </div>
           <div className="inventory-table">

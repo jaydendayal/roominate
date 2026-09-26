@@ -1,17 +1,22 @@
 "use client";
 
-import { createContext, useContext, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { createContext, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Edges, PresentationControls, useCursor } from "@react-three/drei";
-import { shareTarget, workspaceTabs, type Screen } from "./workspaceTabs";
+import { roomsTarget, shareTarget, workspaceTabs, type Screen } from "./workspaceTabs";
 
-export type DioramaTarget = Screen | "share";
+/** What an object in the model opens inside the current project. */
+export type ProjectTarget = Screen | "share";
+/** Every object in the model: the project targets, plus the bed, which leads to the other rooms. */
+export type DioramaTarget = ProjectTarget | "rooms";
 
 export interface HomeDioramaProps {
   issueCount: number;
   hasErrors: boolean;
-  /** Highlighted object, whether the pointer is on it in the model or on its row in the legend. */
+  /** One short line of live project state for each callout's card, such as "3 in cart". */
+  statuses: Record<DioramaTarget, string>;
+  /** Highlighted object, whether the pointer is on it or on its callout, or its callout has focus. */
   active: DioramaTarget | null;
   onHover: (target: DioramaTarget | null) => void;
   onSelect: (target: DioramaTarget) => void;
@@ -41,6 +46,8 @@ const BACK = L / 2;
 const LEFT = -W / 2;
 const WINDOW = { left: -0.3, right: 0.9, sill: 0.95, head: 2.05 };
 const DOOR = { front: -1.65, back: -0.85, head: 2.05 };
+/** How far the door swings into the room while hovered, in radians: about 57°, which keeps it clear of the shopping bag. */
+const DOOR_SWING = 1;
 
 type Vec3 = [number, number, number];
 
@@ -56,8 +63,14 @@ const CALLOUTS: Record<DioramaTarget, { anchor: Vec3; lead: number }> = {
   issues: { anchor: [LEFT + 0.04, -0.475, 1.8], lead: 22 },
   better: { anchor: [-1.25, -1.05, 0.64], lead: 44 },
   share: { anchor: [LEFT - T / 2, (DOOR.front + DOOR.back) / 2, 2.2], lead: 70 },
+  rooms: { anchor: [LEFT + 0.5, 0.75, 0.46], lead: 56 },
 };
-const TARGETS: DioramaTarget[] = [...workspaceTabs.map((tab) => tab.id), "share"];
+/** Every object with a callout, in tab order: the six tabs by number, then the door and the bed by icon. */
+const TARGETS: { id: DioramaTarget; mark: ReactNode; label: string; object: string; summary: string }[] = [
+  ...workspaceTabs.map((tab) => ({ ...tab, mark: tab.index })),
+  { ...shareTarget, id: "share", mark: <shareTarget.icon size={12} /> },
+  { ...roomsTarget, id: "rooms", mark: <roomsTarget.icon size={12} /> },
+];
 
 type AnchorRegistry = Map<DioramaTarget, THREE.Object3D>;
 
@@ -116,19 +129,21 @@ function Flap({ side, hinge, length, width, angle = 1.1 }: { side: "front" | "ba
 interface HotspotProps {
   target: DioramaTarget;
   active: boolean;
+  /** How far the object rises while active, in meters. */
+  lift?: number;
   onHover: (target: DioramaTarget | null) => void;
   onSelect: (target: DioramaTarget) => void;
   children: ReactNode;
 }
 
-function Hotspot({ target, active, onHover, onSelect, children }: HotspotProps) {
+function Hotspot({ target, active, lift = 0.05, onHover, onSelect, children }: HotspotProps) {
   const group = useRef<THREE.Group>(null);
   const anchors = useContext(AnchorContext);
   const [pointerInside, setPointerInside] = useState(false);
   useCursor(pointerInside);
 
   useFrame((_, delta) => {
-    if (group.current) group.current.position.z = THREE.MathUtils.damp(group.current.position.z, active ? 0.05 : 0, 14, delta);
+    if (group.current) group.current.position.z = THREE.MathUtils.damp(group.current.position.z, active ? lift : 0, 14, delta);
   });
 
   return (
@@ -178,6 +193,21 @@ function Floorboards() {
     return new THREE.BufferGeometry().setFromPoints(points);
   }, []);
   return <lineSegments geometry={geometry}><lineBasicMaterial color={KHAKI} transparent opacity={0.1} /></lineSegments>;
+}
+
+/** The door leaf, hinged on the back jamb: shut at rest, it swings into the room while the door is active. */
+function DoorLeaf() {
+  const open = useContext(HoverContext);
+  const leaf = useRef<THREE.Group>(null);
+  useFrame((_, delta) => {
+    if (leaf.current) leaf.current.rotation.z = THREE.MathUtils.damp(leaf.current.rotation.z, open ? DOOR_SWING : 0, 9, delta);
+  });
+  return (
+    <group ref={leaf} position={[LEFT, DOOR.back - 0.02, 0]}>
+      <Block at={[0.02, -0.38, 0]} size={[0.04, 0.76, 2.02]} color={PAPER} />
+      <Block at={[0.055, -0.66, 0.98]} size={[0.03, 0.09, 0.025]} color={KHAKI} />
+    </group>
+  );
 }
 
 /** Dashed quarter circle on the floor showing where the door swings, as a plan drawing would. */
@@ -292,15 +322,18 @@ function MirrorNotes({ count, hasErrors }: { count: number; hasErrors: boolean }
   );
 }
 
-function Room({ issueCount, hasErrors, active, onHover, onSelect }: HomeDioramaProps) {
+function Room({ issueCount, hasErrors, active, onHover, onSelect }: Omit<HomeDioramaProps, "statuses">) {
   const spot = (target: DioramaTarget) => ({ target, active: active === target, onHover, onSelect });
   return (
     <group>
       <Shell />
-      <Bed />
       <Desk />
       <Plant />
       <Block at={[0.35, -0.2, 0]} size={[1.9, 1.3, 0.012]} color={PERIWINKLE} />
+
+      <Hotspot {...spot("rooms")}>
+        <Bed />
+      </Hotspot>
 
       <Hotspot {...spot("capture")}>
         <Block at={[-0.95, 1.59, 0]} size={[0.42, 0.4, 0.5]} color={PAPER} />
@@ -367,37 +400,43 @@ function Room({ issueCount, hasErrors, active, onHover, onSelect }: HomeDioramaP
         </group>
       </Hotspot>
 
-      <Hotspot {...spot("share")}>
+      {/* The swing is this object's hover cue, so it doesn't also rise off the floor. */}
+      <Hotspot {...spot("share")} lift={0}>
         <Block at={[LEFT - T / 2, DOOR.front - 0.015, 0]} size={[T + 0.04, 0.03, DOOR.head + 0.03]} color={KHAKI} />
         <Block at={[LEFT - T / 2, DOOR.back + 0.015, 0]} size={[T + 0.04, 0.03, DOOR.head + 0.03]} color={KHAKI} />
         <Block at={[LEFT - T / 2, (DOOR.front + DOOR.back) / 2, DOOR.head]} size={[T + 0.04, DOOR.back - DOOR.front + 0.06, 0.03]} color={KHAKI} />
-        <group position={[LEFT, DOOR.back - 0.02, 0]} rotation={[0, 0, 0.62]}>
-          <Block at={[0.02, -0.38, 0]} size={[0.04, 0.76, 2.02]} color={PAPER} />
-          <Block at={[0.055, -0.66, 0.98]} size={[0.03, 0.09, 0.025]} color={KHAKI} />
-        </group>
+        <DoorLeaf />
+        {/* An invisible pane across the doorway keeps the door hovered while the leaf swings out from under the pointer. */}
+        <mesh position={[LEFT - T / 2, (DOOR.front + DOOR.back) / 2, DOOR.head / 2]} visible={false}>
+          <boxGeometry args={[T + 0.04, DOOR.back - DOOR.front, DOOR.head]} />
+        </mesh>
         <DoorSwing />
       </Hotspot>
     </group>
   );
 }
 
-/** Orthographic zoom that keeps the model, and headroom for its callouts, inside the canvas at any size. */
+/** Orthographic zoom and a view offset that keep the model centred, with headroom for its callouts, at any size. */
 function FitCamera() {
   const camera = useThree((state) => state.camera);
   const size = useThree((state) => state.size);
   useLayoutEffect(() => {
     if (!(camera instanceof THREE.OrthographicCamera)) return;
-    camera.zoom = Math.max(20, Math.min(size.width / 7.3, (size.height - 64) / 5.55));
+    const { width, height } = size;
+    camera.zoom = Math.max(20, Math.min((width - 48) / 6.8, (height - 90) / 5.45));
     camera.lookAt(0.24, 0.8, -0.1);
+    // The model's outline sits about 0.27 units left of and 0.3 units above the look-at point on screen.
+    // A negative offset starts the rendered window before the full view, which moves the model right and down.
+    camera.setViewOffset(width, height, -0.27 * camera.zoom, -0.3 * camera.zoom, width, height);
     camera.updateProjectionMatrix();
   }, [camera, size]);
   return null;
 }
 
-export default function HomeDiorama({ issueCount, hasErrors, active, onHover, onSelect }: HomeDioramaProps) {
+export default function HomeDiorama({ issueCount, hasErrors, statuses, active, onHover, onSelect }: HomeDioramaProps) {
   const anchors = useRef<AnchorRegistry>(new Map());
   const callouts = useRef(new Map<DioramaTarget, HTMLElement>());
-  const ShareIcon = shareTarget.icon;
+  const cardId = useId();
   return (
     <>
       <Canvas
@@ -407,7 +446,7 @@ export default function HomeDiorama({ issueCount, hasErrors, active, onHover, on
         flat
         dpr={[1, 2]}
         camera={{ position: [6.4, 7.2, 8.6], zoom: 80, near: 0.1, far: 60 }}
-        fallback={<p className="diorama-fallback">This browser can’t draw the 3D model. The list beside it opens every part of the plan.</p>}
+        fallback={<p className="diorama-fallback">This browser can’t draw the 3D model.</p>}
       >
         <AnchorContext.Provider value={anchors}>
           <FitCamera />
@@ -422,38 +461,43 @@ export default function HomeDiorama({ issueCount, hasErrors, active, onHover, on
           </PresentationControls>
         </AnchorContext.Provider>
       </Canvas>
-      {/* The legend beside the model carries the same links for keyboard and screen-reader users. */}
-      <div className="diorama-callouts" aria-hidden="true">
-        {TARGETS.map((target) => {
-          const tab = workspaceTabs.find((candidate) => candidate.id === target);
-          return (
-            <div
-              key={target}
-              className="callout-pin"
-              ref={(element) => {
-                if (element) callouts.current.set(target, element);
-                else callouts.current.delete(target);
-              }}
+      {/* The callouts are the page's navigation, so they are real buttons in tab order, not decoration. */}
+      <div className="diorama-callouts">
+        {TARGETS.map(({ id: target, mark, label, object, summary }) => (
+          <div
+            key={target}
+            className={`callout-pin${active === target ? " active" : ""}`}
+            ref={(element) => {
+              if (element) callouts.current.set(target, element);
+              else callouts.current.delete(target);
+            }}
+          >
+            <button
+              type="button"
+              className="diorama-callout"
+              aria-label={label}
+              aria-describedby={`${cardId}-${target}`}
+              style={{ "--lead": `${CALLOUTS[target].lead}px` } as CSSProperties}
+              onPointerEnter={() => onHover(target)}
+              onPointerLeave={() => onHover(null)}
+              onFocus={() => onHover(target)}
+              onBlur={() => onHover(null)}
+              onClick={() => onSelect(target)}
             >
-              <button
-                type="button"
-                tabIndex={-1}
-                className={`diorama-callout${active === target ? " active" : ""}`}
-                style={{ "--lead": `${CALLOUTS[target].lead}px` } as CSSProperties}
-                onPointerEnter={() => onHover(target)}
-                onPointerLeave={() => onHover(null)}
-                onClick={() => onSelect(target)}
-              >
-                <span className="callout-chip">
-                  <b>{tab ? tab.index : <ShareIcon size={12} />}</b>
-                  <span>{tab?.label ?? shareTarget.label}</span>
-                  {target === "issues" && issueCount > 0 && <em>{issueCount}</em>}
+              <span className="callout-chip">
+                <b>{mark}</b>
+                <span>{label}</span>
+                {target === "issues" && issueCount > 0 && <em>{issueCount}</em>}
+                <span className="callout-card" id={`${cardId}-${target}`}>
+                  <small>{object}</small>{" "}
+                  <span>{summary}</span>{" "}
+                  <strong className={target === "issues" && hasErrors ? "alert" : undefined}>{statuses[target]}</strong>
                 </span>
-                <i className="callout-stem" />
-              </button>
-            </div>
-          );
-        })}
+              </span>
+              <i className="callout-stem" />
+            </button>
+          </div>
+        ))}
       </div>
     </>
   );
