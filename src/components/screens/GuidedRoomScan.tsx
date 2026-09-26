@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Camera, Check, ChevronLeft, ChevronRight, LoaderCircle, RotateCcw, X } from "lucide-react";
+import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import type { MediaAsset } from "@/lib/types";
+import { LengthInput } from "../LengthInput";
 
 const SHOTS = [
   ["Corner 1", "Stand in a corner and include the floor, both walls, and ceiling line."],
@@ -47,7 +49,9 @@ export function GuidedRoomScan({ onClose, onComplete }: { onClose: () => void; o
   const [captures, setCaptures] = useState<(MediaAsset | null)[]>(Array(SHOTS.length).fill(null));
   const [quality, setQuality] = useState("");
   const [dimension, setDimension] = useState<ReferenceMeasurement["dimension"]>("width");
-  const [meters, setMeters] = useState("");
+  // Stored in meters; entered in the user's room unit (ft or m).
+  const [referenceMeters, setReferenceMeters] = useState<number | null>(null);
+  const units = useUnitPreferences();
 
   useEffect(() => {
     let active = true;
@@ -83,8 +87,9 @@ export function GuidedRoomScan({ onClose, onComplete }: { onClose: () => void; o
   };
 
   const finish = () => {
-    const parsed = Number(meters);
-    onComplete(captures.filter((asset): asset is MediaAsset => asset !== null), Number.isFinite(parsed) && parsed > 0 ? { dimension, meters: parsed } : null);
+    // Same 0.1-30 m range the room-analysis API accepts.
+    const valid = referenceMeters != null && Number.isFinite(referenceMeters) && referenceMeters >= 0.1 && referenceMeters <= 30;
+    onComplete(captures.filter((asset): asset is MediaAsset => asset !== null), valid ? { dimension, meters: referenceMeters } : null);
   };
 
   const capturedCount = captures.filter(Boolean).length;
@@ -105,7 +110,7 @@ export function GuidedRoomScan({ onClose, onComplete }: { onClose: () => void; o
         <div className="scan-actions"><button className="secondary-button" disabled={step === 0} onClick={() => { setStep(step - 1); setQuality(""); }}><ChevronLeft size={16} /> Back</button><button className="primary-button" disabled={status !== "ready"} onClick={capture}>{captures[step] ? <RotateCcw size={16} /> : <Camera size={16} />}{captures[step] ? "Retake" : "Capture"}</button><button className="secondary-button" disabled={!captures[step]} onClick={() => { setStep(step + 1); setQuality(""); }}>Next <ChevronRight size={16} /></button></div>
       </> : <div className="scan-reference">
         <div className="scan-reference-icon"><Check size={25} /></div><h3>{capturedCount} of {SHOTS.length} viewpoints captured</h3><p>Enter one measurement taken with a tape or trusted measuring tool. It gives the room analysis a real-world scale anchor.</p>
-        <div><label>Reference edge<select value={dimension} onChange={(event) => setDimension(event.target.value as ReferenceMeasurement["dimension"])}><option value="width">Room width</option><option value="length">Room length</option><option value="height">Ceiling height</option></select></label><label>Measured distance<div className="unit-input"><input type="number" min="0.1" max="30" step="0.01" value={meters} onChange={(event) => setMeters(event.target.value)} placeholder="e.g. 3.65" /><b>m</b></div></label></div>
+        <div><label>Reference edge<select value={dimension} onChange={(event) => setDimension(event.target.value as ReferenceMeasurement["dimension"])}><option value="width">Room width</option><option value="length">Room length</option><option value="height">Ceiling height</option></select></label><label>Measured distance<div className="unit-input"><LengthInput min={0} step={units.roomUnit === "ft" ? 0.25 : 0.01} unit={units.roomUnit} meters={referenceMeters} onChange={setReferenceMeters} placeholder={units.roomUnit === "ft" ? "e.g. 12" : "e.g. 3.65"} /><b>{units.roomUnit}</b></div></label></div>
         <div className="warning-note"><AlertTriangle size={16} /> Browser photos do not produce LiDAR geometry. Review all estimated dimensions before fit decisions.</div>
         <div className="scan-actions"><button className="secondary-button" onClick={() => setStep(SHOTS.length - 1)}><ChevronLeft size={16} /> Back</button><button className="primary-button" disabled={capturedCount < 4} onClick={finish}><Check size={16} /> Use scan</button></div>
       </div>}
