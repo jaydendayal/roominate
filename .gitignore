@@ -1,0 +1,14 @@
+node_modules/
+.next/
+coverage/
+test-results/
+playwright-report/
+*.log
+*.tsbuildinfo
+.env
+.env.local
+.venv/
+__pycache__/
+.pytest_cache/
+backend/data/*.sqlite*
+backend/uploads/

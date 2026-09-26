@@ -1,0 +1,212 @@
+export type EvidenceSource =
+  | "user_confirmed"
+  | "media_estimate"
+  | "scan"
+  | "imported_plan"
+  | "url"
+  | "screenshot"
+  | "demo_fixture";
+
+export type Confidence = "confirmed" | "likely" | "uncertain";
+
+export interface Vec2 {
+  x: number;
+  z: number;
+}
+
+export interface Dimensions {
+  width: number | null;
+  depth: number | null;
+  height: number | null;
+}
+
+export interface Evidence {
+  source: EvidenceSource;
+  confidence: number;
+  confirmedByUser: boolean;
+  note?: string;
+}
+
+export interface MediaAsset {
+  id: string;
+  name: string;
+  type: "image" | "video";
+  dataUrl?: string;
+  privacy: "private" | "shared";
+  size: number;
+}
+
+export interface RoomFeature {
+  id: string;
+  name: string;
+  kind: "door" | "window" | "closet" | "radiator" | "obstacle";
+  position: Vec2;
+  width: number;
+  depth: number;
+  height: number;
+  confirmed: boolean;
+}
+
+export interface ClearanceZone {
+  id: string;
+  name: string;
+  position: Vec2;
+  width: number;
+  depth: number;
+  source: EvidenceSource;
+  confirmed: boolean;
+}
+
+export interface PaletteSwatch {
+  id: string;
+  hex: string;
+  label: string;
+  source: string;
+  pinned: boolean;
+}
+
+export interface Room {
+  id: string;
+  width: number;
+  length: number;
+  height: number;
+  dimensionEvidence: Record<"width" | "length" | "height", Evidence>;
+  mediaAssets: MediaAsset[];
+  features: RoomFeature[];
+  clearanceZones: ClearanceZone[];
+  geometryVersion: number;
+  reconstructionStatus: "manual" | "estimated" | "reviewed";
+  palette: PaletteSwatch[];
+}
+
+export interface Money {
+  amount: number;
+  currency: "USD";
+  observedAt: string;
+  confirmed: boolean;
+}
+
+export interface Product {
+  id: string;
+  name: string;
+  store: string;
+  sourceURL: string | null;
+  screenshotDataUrl?: string;
+  category: string;
+  variant: string;
+  dimensions: Dimensions;
+  price: Money | null;
+  fieldEvidence: Record<string, Evidence>;
+  alternativeGroupId?: string;
+  tags: string[];
+}
+
+export type AcquisitionStatus = "owned" | "planned" | "tentative" | "buying";
+
+export interface Item {
+  id: string;
+  productId: string;
+  ownerId: string;
+  acquisitionStatus: AcquisitionStatus;
+  purchaseStatus: "in_cart" | "not_purchasing" | "deferred";
+  quantity: number;
+  essentiality: "essential" | "optional";
+  needsServed: string[];
+  transform: { position: Vec2; rotationY: number } | null;
+  placementType: "floor" | "wall" | "stacked";
+  locked?: boolean;
+}
+
+export interface Person {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface HousingRule {
+  id: string;
+  label: string;
+  text: string;
+  sourceURL: string | null;
+  sourceType: "user_note" | "official";
+  verificationStatus: "confirmed" | "needs_review";
+  prohibitedCategories: string[];
+  prohibitedTags: string[];
+  dismissed: boolean;
+}
+
+export type IssueType =
+  | "fit"
+  | "clearance"
+  | "budget"
+  | "duplicate"
+  | "rule"
+  | "missing_data"
+  | "unmet_need";
+
+export interface Issue {
+  id: string;
+  type: IssueType;
+  severity: "error" | "warning" | "info";
+  confidence: Confidence;
+  affectedItemIds: string[];
+  affectedGeometryIds: string[];
+  message: string;
+  detail: string;
+  suggestedActions: string[];
+  status: "open" | "resolved" | "dismissed";
+}
+
+export type DuplicateResolution =
+  | { action: "intentional"; note: string }
+  | { action: "keep"; keepItemId: string }
+  | { action: "coordinate"; buyerId: string };
+
+export interface ProposalChange {
+  id: string;
+  type: "replace" | "remove" | "reposition" | "defer";
+  itemId: string;
+  replacementProductId?: string;
+  position?: Vec2;
+  rotationY?: number;
+  reason: string;
+  impact: string;
+  confidence: Confidence;
+  accepted: boolean | null;
+}
+
+export interface Proposal {
+  id: string;
+  basedOnGeometryVersion: number;
+  basedOnCartVersion: number;
+  beforeSubtotal: number;
+  afterSubtotal: number;
+  changes: ProposalChange[];
+  resolvedIssueIds: string[];
+  remainingIssueIds: string[];
+  createdAt: string;
+  stale: boolean;
+}
+
+export interface Project {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  roomType: string;
+  ownerId: string;
+  people: Person[];
+  room: Room;
+  products: Product[];
+  items: Item[];
+  budgetAmount: number;
+  budgetCurrency: "USD";
+  priorities: string[];
+  needs: string[];
+  rules: HousingRule[];
+  duplicateResolutions: Record<string, DuplicateResolution>;
+  proposal: Proposal | null;
+  cartVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+

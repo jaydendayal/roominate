@@ -1,0 +1,36 @@
+{
+  "name": "roominate",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "dev:all": "concurrently --kill-others --names API,WEB \"npm run backend:dev\" \"npm run dev\"",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "backend:dev": "PYTHONPATH=backend .venv/bin/uvicorn app.main:app --reload --port 8000",
+    "backend:test": "PYTHONPATH=backend .venv/bin/pytest -q backend/tests"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.6",
+    "@react-three/fiber": "^9.4.0",
+    "lucide-react": "^0.468.0",
+    "next": "^16.3.6",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "three": "^0.181.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.6",
+    "@types/react-dom": "^19.0.2",
+    "@types/three": "^0.181.0",
+    "concurrently": "^10.0.5",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  }
+}
