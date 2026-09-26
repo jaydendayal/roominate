@@ -114,14 +114,14 @@ export function StudioPanel({
           issues={issues}
           selectedItemId={selectedId}
           onSelectItem={(id) => setSelectedId(id || null)}
-          onMoveItem={(itemId, position, elevation) => {
+          onMoveItem={(itemId, position, elevation, rotationZ) => {
             const item = project.items.find((candidate) => candidate.id === itemId);
-            if (item?.transform) changeItem(itemId, { transform: { ...item.transform, position, elevation } });
+            if (item?.transform) changeItem(itemId, { transform: { ...item.transform, position, elevation, rotationZ } });
           }}
           cutaway={cutaway}
           viewCommand={viewCommand}
         />
-        <div className="viewport-legend"><span><i className="legend-owned" /> Owned</span><span><i className="legend-planned" /> Planned</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag items to move · blue arrow lifts</span></div>
+        <div className="viewport-legend"><span><i className="legend-owned" /> Owned</span><span><i className="legend-planned" /> Planned</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag to move · purple ring rotates · blue arrow lifts</span></div>
       </section>
 
       <section className="studio-inspector panel-surface">
