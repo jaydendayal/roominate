@@ -129,7 +129,8 @@ test("shortlist library items are placed into the 3D room when added", async ({ 
   await expect(card).toBeVisible();
   await card.getByRole("button", { name: /^Add$/ }).click();
   await page.getByRole("button", { name: "3D Studio" }).first().click();
-  await expect(page.getByRole("button", { name: /MARKUS/ })).toContainText("placed");
+  // Anchored so it matches the item row, not the row's "Lock position and rotation of MARKUS" button.
+  await expect(page.getByRole("button", { name: /^MARKUS/ })).toContainText("placed");
   await expect.poll(() => page.evaluate(() => {
     const stored = JSON.parse(localStorage.getItem("roominate.projects.v1") ?? "{}");
     const project = stored.projects?.find((candidate: { id: string }) => candidate.id === "project-demo");
