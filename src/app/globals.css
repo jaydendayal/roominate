@@ -433,7 +433,12 @@ input, select { color: var(--ink); }
 .product-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .product-card { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--field); }
 .product-art { height: 100px; position: relative; display: grid; place-items: center; color: var(--muted); background: var(--bg); background-image: var(--drafting-grid); border-bottom: 1px solid var(--line); }
-.product-art span { position: absolute; bottom: 8px; left: 9px; background: var(--paper); border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px; font: 400 10px var(--font-mono); }
+/* Retailer photos have white backgrounds, so photo tiles drop the drafting grid and sit on white. */
+.product-art.has-photo { height: 150px; background: #fff; }
+/* Absolutely filled: percentage heights don't resolve inside the grid-centered tiles, which let tall photos overflow. */
+.product-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; padding: 8px; background: #fff; }
+.listing-image { position: relative; overflow: hidden; }
+.product-art span { position: absolute; z-index: 1; bottom: 8px; left: 9px; background: var(--paper); border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px; font: 400 10px var(--font-mono); }
 .product-card-copy { padding: 13px; }
 .product-card-copy > small { color: var(--muted); font: 400 10.5px var(--font-mono); }
 .product-card-copy h3 { font-family: var(--font-sans); font-weight: 650; letter-spacing: 0; font-size: 14px; margin: 5px 0; }
@@ -535,6 +540,17 @@ input, select { color: var(--ink); }
 .retailer-message.available { background: var(--ok-soft); color: var(--ok-ink); }
 .retailer-message.unavailable { background: var(--warn-soft); color: var(--warn-ink); }
 .retailer-message a { color: inherit; font-weight: 700; }
+.retailer-message { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.retailer-message > span { flex: 1 1 260px; }
+.retailer-message .text-button { color: inherit; text-decoration: underline; padding: 0; }
+.shop-filters { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.type-filters { flex-wrap: wrap; margin-bottom: 0; }
+.type-filters button { padding: 6px 11px; font-size: 12.5px; }
+.shop-filters > .secondary-button { flex: 0 0 auto; }
+.live-search { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 14px; }
+.live-search summary { cursor: pointer; display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.live-search > p { color: var(--muted); font-size: 12px; margin: 8px 0 10px; }
+.listing-image:has(.product-photo) { background: #fff; }
 .listing-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 15px; }
 .listing-card { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--field); display: flex; flex-direction: column; }
 .listing-image { height: 145px; background: var(--bg); display: grid; place-items: center; color: var(--muted); }
@@ -824,6 +840,7 @@ input, select { color: var(--ink); }
   .visual-profile-box { align-items: flex-start; flex-direction: column; }
   .visual-profile-box button { width: 100%; justify-content: center; }
   .shopping-discovery, .retailer-checkout { padding: 14px; }
+  .shop-filters { flex-direction: column; }
   .listing-grid { grid-template-columns: 1fr; }
   .retailer-search { flex-direction: column; }
   .checkout-heading { display: block; }
