@@ -16,9 +16,24 @@ interface ModelProps {
   opacity?: number;
   profile?: FurnitureVisualProfile;
   emphasized?: boolean;
+  /** World-space clipping applied to every part (e.g. to split off the portion outside the room). */
+  clipping?: ModelClipping;
+}
+
+export interface ModelClipping {
+  planes: THREE.Plane[];
+  /** Clip only where every plane clips (keeps the union of the planes' outsides) instead of where any does. */
+  intersection?: boolean;
 }
 
 const FinishContext = createContext({ roughness: .7, metalness: 0 });
+const ClipContext = createContext<ModelClipping | undefined>(undefined);
+
+/** Material props that apply the model's clipping, if any. */
+function useClip() {
+  const clipping = useContext(ClipContext);
+  return { clippingPlanes: clipping?.planes ?? null, clipIntersection: clipping?.intersection ?? false, clipShadows: true };
+}
 
 function tone(color: string, lightness: number) {
   return new THREE.Color(color).offsetHSL(0, 0, lightness).getStyle();
@@ -26,17 +41,19 @@ function tone(color: string, lightness: number) {
 
 function BoxPart({ size, position, color, opacity = 1, radius = 0 }: { size: Size; position: Position; color: string; opacity?: number; radius?: number }) {
   const finish = useContext(FinishContext);
+  const clip = useClip();
   return <mesh position={position} castShadow receiveShadow>
     {radius > 0 ? <boxGeometry args={size} /> : <boxGeometry args={size} />}
-    <meshStandardMaterial color={color} roughness={radius ? Math.max(.72, finish.roughness) : finish.roughness} metalness={finish.metalness} transparent={opacity < 1} opacity={opacity} />
+    <meshStandardMaterial color={color} roughness={radius ? Math.max(.72, finish.roughness) : finish.roughness} metalness={finish.metalness} transparent={opacity < 1} opacity={opacity} {...clip} />
   </mesh>;
 }
 
 function CylinderPart({ size, position, color, opacity = 1, sides = 18 }: { size: Size; position: Position; color: string; opacity?: number; sides?: number }) {
   const finish = useContext(FinishContext);
+  const clip = useClip();
   return <mesh position={position} scale={[size[0] / 2, size[1], size[2] / 2]} castShadow receiveShadow>
     <cylinderGeometry args={[1, 1, 1, sides]} />
-    <meshStandardMaterial color={color} roughness={finish.roughness} metalness={finish.metalness} transparent={opacity < 1} opacity={opacity} />
+    <meshStandardMaterial color={color} roughness={finish.roughness} metalness={finish.metalness} transparent={opacity < 1} opacity={opacity} {...clip} />
   </mesh>;
 }
 
@@ -87,19 +104,21 @@ function Wardrobe({ w, h, d, color, opacity }: { w: number; h: number; d: number
 }
 
 function Hamper({ w, h, d, color, opacity }: { w: number; h: number; d: number; color: string; opacity: number }) {
+  const clip = useClip();
   return <>
     <CylinderPart size={[w * .92, h * .9, d * .92]} position={[0, -h * .03, 0]} color={color} opacity={opacity * .82} sides={20} />
     <mesh position={[0, h * .43, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[w * .46, Math.max(w, d) * .045, d * .46]} castShadow>
       <torusGeometry args={[1, .1, 8, 24]} />
-      <meshStandardMaterial color={tone(color, -.15)} roughness={.8} transparent={opacity < 1} opacity={opacity} />
+      <meshStandardMaterial color={tone(color, -.15)} roughness={.8} transparent={opacity < 1} opacity={opacity} {...clip} />
     </mesh>
   </>;
 }
 
 function Beanbag({ w, h, d, color, opacity }: { w: number; h: number; d: number; color: string; opacity: number }) {
+  const clip = useClip();
   return <mesh scale={[w / 2, h / 2, d / 2]} castShadow receiveShadow>
     <sphereGeometry args={[1, 24, 14]} />
-    <meshStandardMaterial color={color} roughness={.94} transparent={opacity < 1} opacity={opacity} />
+    <meshStandardMaterial color={color} roughness={.94} transparent={opacity < 1} opacity={opacity} {...clip} />
   </mesh>;
 }
 
@@ -124,6 +143,7 @@ function Dresser({ w, h, d, color, opacity }: { w: number; h: number; d: number;
 }
 
 function Lamp({ w, h, d, color, opacity }: { w: number; h: number; d: number; color: string; opacity: number }) {
+  const clip = useClip();
   const bottom = -h / 2;
   const span = Math.min(w, d);
   return <>
@@ -131,19 +151,20 @@ function Lamp({ w, h, d, color, opacity }: { w: number; h: number; d: number; co
     <CylinderPart size={[span * .1, h * .66, span * .1]} position={[0, bottom + h * .39, 0]} color={tone(color, -.2)} opacity={opacity} sides={14} />
     <mesh position={[0, bottom + h * .8, 0]} scale={[w * .44, h * .32, d * .44]} castShadow receiveShadow>
       <coneGeometry args={[1, 1, 24, 1, true]} />
-      <meshStandardMaterial color={tone(color, .16)} side={THREE.DoubleSide} roughness={.78} transparent opacity={opacity * .9} />
+      <meshStandardMaterial color={tone(color, .16)} side={THREE.DoubleSide} roughness={.78} transparent opacity={opacity * .9} {...clip} />
     </mesh>
   </>;
 }
 
 function Mirror({ w, h, d, color, opacity }: { w: number; h: number; d: number; color: string; opacity: number }) {
+  const clip = useClip();
   const face = d / 2;
   const frame = Math.max(.025, Math.min(w, h) * .07);
   return <>
     <BoxPart size={[w, h, Math.max(.025, d * .55)]} position={[0, 0, 0]} color={tone(color, -.18)} opacity={opacity} />
     <mesh position={[0, 0, face + .006]} castShadow>
       <planeGeometry args={[Math.max(.02, w - frame * 2), Math.max(.02, h - frame * 2)]} />
-      <meshPhysicalMaterial color="#b9cfce" metalness={.75} roughness={.16} transparent={opacity < 1} opacity={opacity} />
+      <meshPhysicalMaterial color="#b9cfce" metalness={.75} roughness={.16} transparent={opacity < 1} opacity={opacity} {...clip} />
     </mesh>
     <BoxPart size={[w, frame, d * .25]} position={[0, h / 2 - frame / 2, face]} color={color} opacity={opacity} />
     <BoxPart size={[w, frame, d * .25]} position={[0, -h / 2 + frame / 2, face]} color={color} opacity={opacity} />
@@ -162,7 +183,7 @@ function MiniFridge({ w, h, d, color, opacity }: { w: number; h: number; d: numb
   </>;
 }
 
-export function FurnitureModel({ category, name, dimensions, color, opacity = 1, profile, emphasized = false }: ModelProps) {
+export function FurnitureModel({ category, name, dimensions, color, opacity = 1, profile, emphasized = false, clipping }: ModelProps) {
   const w = dimensions.width;
   const h = dimensions.height;
   const d = dimensions.depth;
@@ -190,5 +211,5 @@ export function FurnitureModel({ category, name, dimensions, color, opacity = 1,
     case "mini_fridge": model = <MiniFridge {...props} />; break;
     default: model = <BoxPart size={[w, h, d]} position={[0, 0, 0]} color={styledColor} opacity={opacity} />;
   }
-  return <FinishContext.Provider value={finish}><group scale={[footprintScale, 1, footprintScale]}>{model}</group></FinishContext.Provider>;
+  return <FinishContext.Provider value={finish}><ClipContext.Provider value={clipping}><group scale={[footprintScale, 1, footprintScale]}>{model}</group></ClipContext.Provider></FinishContext.Provider>;
 }

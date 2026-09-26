@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, ChevronRight, Eye, Grid3X3, Maximize2, Move3D, PackagePlus, RotateCw, ScanLine, ShoppingCart } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
-import { cents, productFor, purchaseSubtotal } from "@/lib/calculations";
+import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/calculations";
 import { snapItemPosition } from "@/lib/snap";
-import type { Issue, Project, Vec2 } from "@/lib/types";
+import type { Issue, Item, Project, Vec2 } from "@/lib/types";
 import { LengthInput } from "../LengthInput";
 import { RoomCanvas } from "../RoomCanvas";
 
@@ -40,13 +40,19 @@ export function StudioPanel({
     }));
   };
 
+  // Typed and nudged moves settle like drags: off the top of an item they drop to the floor, into one they land on top.
+  const moveTo = (item: Item, position: Vec2) => {
+    const transform = item.transform ?? { position, rotationZ: 0 };
+    changeItem(item.id, { transform: { ...transform, position, elevation: settledElevation(project, { ...item, transform }, position) } });
+  };
+
   const rotateSelected = () => {
     if (!selected) return;
     const rotationZ = (selected.transform?.rotationZ ?? 0) + Math.PI / 2;
     const center = selected.transform?.position ?? { x: project.room.width / 2, y: project.room.length / 2 };
     // Rotating swaps width and depth, so re-align edges when snapping is on.
     const position = units.snapToGrid ? snapItemPosition(project, selected.id, center, units.gridSize, rotationZ) : center;
-    changeItem(selected.id, { transform: { position, rotationZ } });
+    changeItem(selected.id, { transform: { ...selected.transform, position, rotationZ } });
   };
 
   // Nudges move by exactly the user's step distance from the current position.
@@ -55,14 +61,19 @@ export function StudioPanel({
   const nudgeSelected = (axis: keyof Vec2, direction: -1 | 1) => {
     if (!selected?.transform || selected.locked) return;
     const { position } = selected.transform;
-    const moved = { ...position, [axis]: Number((position[axis] + direction * units.moveStep).toFixed(4)) };
-    changeItem(selected.id, { transform: { ...selected.transform, position: moved } });
+    moveTo(selected, { ...position, [axis]: Number((position[axis] + direction * units.moveStep).toFixed(4)) });
   };
 
   const moveSelectedAxis = (axis: keyof Vec2, meters: number | null) => {
     if (!selected || meters == null) return;
     const position = { x: selected.transform?.position.x ?? 0, y: selected.transform?.position.y ?? 0, [axis]: meters };
-    changeItem(selected.id, { transform: { position, rotationZ: selected.transform?.rotationZ ?? 0 } });
+    moveTo(selected, position);
+  };
+
+  const setSelectedElevation = (meters: number | null) => {
+    if (!selected || meters == null) return;
+    const transform = selected.transform ?? { position: { x: project.room.width / 2, y: project.room.length / 2 }, rotationZ: 0 };
+    changeItem(selected.id, { transform: { ...transform, elevation: meters } });
   };
 
   return (
@@ -103,14 +114,14 @@ export function StudioPanel({
           issues={issues}
           selectedItemId={selectedId}
           onSelectItem={(id) => setSelectedId(id || null)}
-          onMoveItem={(itemId, position) => {
+          onMoveItem={(itemId, position, elevation) => {
             const item = project.items.find((candidate) => candidate.id === itemId);
-            if (item?.transform) changeItem(itemId, { transform: { ...item.transform, position } });
+            if (item?.transform) changeItem(itemId, { transform: { ...item.transform, position, elevation } });
           }}
           cutaway={cutaway}
           viewCommand={viewCommand}
         />
-        <div className="viewport-legend"><span><i className="legend-owned" /> Owned</span><span><i className="legend-planned" /> Planned</span><span><i className="legend-conflict" /> Conflict</span><span><Move3D size={14} /> Drag items to move</span></div>
+        <div className="viewport-legend"><span><i className="legend-owned" /> Owned</span><span><i className="legend-planned" /> Planned</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag items to move · blue arrow lifts</span></div>
       </section>
 
       <section className="studio-inspector panel-surface">
@@ -128,6 +139,7 @@ export function StudioPanel({
             <div className="coordinate-grid">
               <label>X ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.x ?? 0} onChange={(meters) => moveSelectedAxis("x", meters)} /></label>
               <label>Y ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.y ?? 0} onChange={(meters) => moveSelectedAxis("y", meters)} /></label>
+              <label>Z ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.elevation ?? 0} onChange={setSelectedElevation} /></label>
             </div>
             <div className="nudge-row" role="group" aria-label={`Move by ${stepLabel}`}>
               <span>Move {stepLabel}</span>

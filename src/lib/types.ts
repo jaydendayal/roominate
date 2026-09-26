@@ -136,7 +136,8 @@ export interface Item {
   quantity: number;
   essentiality: "essential" | "optional";
   needsServed: string[];
-  transform: { position: Vec2; rotationZ: number } | null;
+  /** `elevation` is the item's base height on the vertical Z axis; omitted means 0 (on the floor). */
+  transform: { position: Vec2; rotationZ: number; elevation?: number } | null;
   placementType: "floor" | "wall" | "stacked";
   locked?: boolean;
 }
