@@ -24,7 +24,6 @@ import {
   X,
 } from "lucide-react";
 import { useProjectStore } from "@/hooks/useProjectStore";
-import { UnitPreferencesProvider, useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { calculateIssues, cents, purchaseSubtotal } from "@/lib/calculations";
 import type { Project } from "@/lib/types";
 import { CapturePanel } from "./screens/CapturePanel";
@@ -133,35 +132,15 @@ function Dashboard({
   );
 }
 
-function UnitToggle() {
-  const { unitSystem, setUnitSystem } = useUnitPreferences();
-  return (
-    <div className="unit-toggle" role="group" aria-label="Distance units">
-      <button type="button" aria-pressed={unitSystem === "imperial"} title="Imperial (feet and inches)" onClick={() => setUnitSystem("imperial")}>ft</button>
-      <button type="button" aria-pressed={unitSystem === "metric"} title="Metric (meters and centimeters)" onClick={() => setUnitSystem("metric")}>m</button>
-    </div>
-  );
-}
-
 export function RoominateApp() {
-  return (
-    <UnitPreferencesProvider>
-      <RoominateWorkspace />
-    </UnitPreferencesProvider>
-  );
-}
-
-function RoominateWorkspace() {
   const store = useProjectStore();
-  const units = useUnitPreferences();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [screen, setScreen] = useState<Screen>("studio");
   const [mobileNav, setMobileNav] = useState(false);
   const [shareNotice, setShareNotice] = useState(false);
   const [undoProject, setUndoProject] = useState<Project | null>(null);
   const activeProject = store.projects.find((project) => project.id === activeId) ?? null;
-  const formatLength = units.formatLength;
-  const issues = useMemo(() => (activeProject ? calculateIssues(activeProject, { formatLength }) : []), [activeProject, formatLength]);
+  const issues = useMemo(() => (activeProject ? calculateIssues(activeProject) : []), [activeProject]);
   const subtotal = activeProject ? purchaseSubtotal(activeProject) : { amount: 0, complete: true };
 
   if (!store.hydrated) return <div className="loading-screen"><span className="brand-mark"><Box /></span><p>Opening your room…</p></div>;
@@ -208,7 +187,6 @@ function RoominateWorkspace() {
           </div>
         </div>
         <div className="header-actions">
-          <UnitToggle />
           {undoProject && <button className="secondary-button compact-button" onClick={() => { update(() => undoProject); setUndoProject(null); }}><RotateCcw size={15} /> Undo</button>}
           <button className="secondary-button compact-button" onClick={share}><Share2 size={15} /><span className="desktop-only">Share</span></button>
           <div className="avatars" aria-label="Collaborators">

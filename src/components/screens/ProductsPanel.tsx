@@ -2,11 +2,9 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { AlertCircle, Box, Check, ExternalLink, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Trash2, Upload } from "lucide-react";
-import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { apiFetch } from "@/lib/api";
 import { cents, productFor } from "@/lib/calculations";
 import type { Evidence, Issue, Product, Project } from "@/lib/types";
-import { LengthInput } from "../LengthInput";
 
 interface ProductDraft {
   name: string;
@@ -14,10 +12,9 @@ interface ProductDraft {
   sourceURL: string;
   category: string;
   variant: string;
-  /** Meters; null means unknown. */
-  width: number | null;
-  depth: number | null;
-  height: number | null;
+  width: string;
+  depth: string;
+  height: string;
   price: string;
   source: "url" | "screenshot";
   screenshotDataUrl?: string;
@@ -38,7 +35,7 @@ interface ProductExtractionResponse {
   };
 }
 
-const blankDraft = (source: "url" | "screenshot", sourceURL = ""): ProductDraft => ({ name: "", store: "", sourceURL, category: "", variant: "", width: null, depth: null, height: null, price: "", source });
+const blankDraft = (source: "url" | "screenshot", sourceURL = ""): ProductDraft => ({ name: "", store: "", sourceURL, category: "", variant: "", width: "", depth: "", height: "", price: "", source });
 
 function extractedDraft(result: ProductExtractionResponse, source: "url" | "screenshot", fallbackUrl = "", screenshotDataUrl?: string): ProductDraft {
   return {
@@ -47,9 +44,9 @@ function extractedDraft(result: ProductExtractionResponse, source: "url" | "scre
     sourceURL: result.product.source_url ?? fallbackUrl,
     category: result.product.category ?? "",
     variant: result.product.variant ?? "",
-    width: result.product.dimensions.width_m,
-    depth: result.product.dimensions.depth_m,
-    height: result.product.dimensions.height_m,
+    width: result.product.dimensions.width_m?.toString() ?? "",
+    depth: result.product.dimensions.depth_m?.toString() ?? "",
+    height: result.product.dimensions.height_m?.toString() ?? "",
     price: result.product.price ? (result.product.price.amount_cents / 100).toFixed(2) : "",
     source,
     screenshotDataUrl,
@@ -65,7 +62,6 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const units = useUnitPreferences();
   const shownProducts = useMemo(() => project.products.filter((product) => `${product.name} ${product.category} ${product.store}`.toLowerCase().includes(search.toLowerCase())), [project.products, search]);
 
   const changeProject = (updater: (current: Project) => Project) => update((current) => {
@@ -119,9 +115,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
   const addDraft = () => {
     if (!draft?.name.trim()) return;
     const id = `product-${crypto.randomUUID()}`;
-    const confidence = (present: boolean): Evidence => ({ source: draft.source, confidence: present ? 0.7 : 0, confirmedByUser: present });
-    const positive = (meters: number | null) => (meters != null && Number.isFinite(meters) && meters > 0 ? meters : null);
-    const dimensions = { width: positive(draft.width), depth: positive(draft.depth), height: positive(draft.height) };
+    const confidence = (value: string): Evidence => ({ source: draft.source, confidence: value ? 0.7 : 0, confirmedByUser: Boolean(value) });
     const parsedPrice = draft.price ? Math.round(Number(draft.price) * 100) : null;
     const product: Product = {
       id,
@@ -131,9 +125,9 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       screenshotDataUrl: draft.screenshotDataUrl,
       category: draft.category.trim().toLowerCase() || "uncategorized",
       variant: draft.variant.trim(),
-      dimensions,
+      dimensions: { width: draft.width ? Number(draft.width) : null, depth: draft.depth ? Number(draft.depth) : null, height: draft.height ? Number(draft.height) : null },
       price: parsedPrice != null && Number.isFinite(parsedPrice) ? { amount: parsedPrice, currency: "USD", observedAt: new Date().toISOString(), confirmed: true } : null,
-      fieldEvidence: { name: confidence(Boolean(draft.name)), dimensions: confidence(Object.values(dimensions).every((value) => value != null)), price: confidence(Boolean(draft.price)) },
+      fieldEvidence: { name: confidence(draft.name), dimensions: confidence(draft.width && draft.depth && draft.height), price: confidence(draft.price) },
       tags: [],
     };
     changeProject((current) => ({ ...current, products: [...current.products, product], items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.category === "uncategorized" ? [] : [product.category], transform: null, placementType: "floor" }] }));
@@ -164,7 +158,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
             const existing = project.items.filter((item) => item.productId === product.id && item.purchaseStatus !== "deferred").length;
             return <article className="product-card" key={product.id}>
               <div className="product-art"><Box size={35} /><span>{product.category}</span></div>
-              <div className="product-card-copy"><small>{product.store}</small><h3>{product.name}</h3><p>{units.formatDimensions(product.dimensions)}</p><div><strong>{product.price ? cents(product.price.amount) : "Price unknown"}</strong><button className="secondary-button small" onClick={() => addProduct(product)}><PackagePlus size={14} /> Add {existing ? "another" : ""}</button></div></div>
+              <div className="product-card-copy"><small>{product.store}</small><h3>{product.name}</h3><p>{product.dimensions.width != null ? `${product.dimensions.width.toFixed(2)} × ${product.dimensions.depth?.toFixed(2)} × ${product.dimensions.height?.toFixed(2)} m` : "Dimensions unknown"}</p><div><strong>{product.price ? cents(product.price.amount) : "Price unknown"}</strong><button className="secondary-button small" onClick={() => addProduct(product)}><PackagePlus size={14} /> Add {existing ? "another" : ""}</button></div></div>
             </article>;
           })}
           {!shownProducts.length && <div className="empty-state"><Box size={28} /><h3>No products yet</h3><p>Import a URL or screenshot, then confirm the extracted details.</p></div>}
@@ -189,10 +183,10 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
               <label>Category<input value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} placeholder="e.g. desk" /></label>
               <label className="span-2">Variant<input value={draft.variant} onChange={(event) => setDraft({ ...draft, variant: event.target.value })} placeholder="Size / color" /></label>
             </div>
-            <h3 className="form-subheading">Dimensions <small>{units.objectUnit === "in" ? "inches" : "centimeters"}</small></h3>
-            <div className="form-grid three">{(["width", "depth", "height"] as const).map((key) => <label key={key}>{key[0].toUpperCase() + key.slice(1)}<LengthInput step={0.1} min={0} unit={units.objectUnit} meters={draft[key]} onChange={(meters) => setDraft((current) => current && { ...current, [key]: meters })} placeholder="Unknown" /></label>)}</div>
+            <h3 className="form-subheading">Dimensions <small>meters</small></h3>
+            <div className="form-grid three"><label>Width<input type="number" step="0.01" min="0" value={draft.width} onChange={(event) => setDraft({ ...draft, width: event.target.value })} placeholder="Unknown" /></label><label>Depth<input type="number" step="0.01" min="0" value={draft.depth} onChange={(event) => setDraft({ ...draft, depth: event.target.value })} placeholder="Unknown" /></label><label>Height<input type="number" step="0.01" min="0" value={draft.height} onChange={(event) => setDraft({ ...draft, height: event.target.value })} placeholder="Unknown" /></label></div>
             <div className="form-grid"><label>Observed price (USD)<input type="number" step="0.01" min="0" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} placeholder="Unknown" /></label><label>Source URL<input type="url" value={draft.sourceURL} onChange={(event) => setDraft({ ...draft, sourceURL: event.target.value })} placeholder="Optional" /></label></div>
-            {(draft.width == null || draft.depth == null || draft.height == null) &&<div className="warning-note"><AlertCircle size={16} /><span>Missing dimensions are allowed, but fit will remain unverified.</span></div>}
+            {(!draft.width || !draft.depth || !draft.height) && <div className="warning-note"><AlertCircle size={16} /><span>Missing dimensions are allowed, but fit will remain unverified.</span></div>}
             <button className="primary-button full" disabled={!draft.name.trim()} onClick={addDraft}><Check size={17} /> Confirm & add to cart</button>
           </>}
         </section>

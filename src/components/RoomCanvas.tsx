@@ -5,10 +5,8 @@ import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
 import { OrbitControls, Text } from "@react-three/drei";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
-import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { itemHasConflict, productFor } from "@/lib/calculations";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
-import { gridOptions } from "@/lib/units";
 
 interface RoomCanvasProps {
   project: Project;
@@ -37,45 +35,6 @@ function CameraRig({ project, command, controlsRef }: { project: Project; comman
     }
   }, [camera, command, controlsRef, project.room.height, project.room.length, project.room.width]);
   return null;
-}
-
-const MAX_GRID_LINES_PER_AXIS = 400;
-
-/** Floor grid with exact square size, anchored at the room origin corner so squares count out from the walls. */
-function FloorGrid({ width, length, cell }: { width: number; length: number; cell: number }) {
-  const geometry = useMemo(() => {
-    const points: number[] = [];
-    const columns = Math.floor(width / cell + 1e-6);
-    const rows = Math.floor(length / cell + 1e-6);
-    if (columns <= MAX_GRID_LINES_PER_AXIS && rows <= MAX_GRID_LINES_PER_AXIS) {
-      for (let i = 1; i <= columns; i += 1) points.push(i * cell, 0, 0, i * cell, 0, length);
-      for (let j = 1; j <= rows; j += 1) points.push(0, 0, j * cell, width, 0, j * cell);
-    }
-    const buffer = new THREE.BufferGeometry();
-    buffer.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
-    return buffer;
-  }, [cell, length, width]);
-  useEffect(() => () => geometry.dispose(), [geometry]);
-  return (
-    <lineSegments geometry={geometry} position={[0, 0.004, 0]}>
-      <lineBasicMaterial color="#6f5642" transparent opacity={0.45} />
-    </lineSegments>
-  );
-}
-
-function GridScaleLegend() {
-  const { unitSystem, gridSize, setGridSize } = useUnitPreferences();
-  return (
-    <div className="grid-scale" role="group" aria-label="Grid scale">
-      <span className="grid-scale-swatch" aria-hidden="true" />
-      <label>
-        <span>1 square =</span>
-        <select aria-label="Grid square size" value={gridSize} onChange={(event) => setGridSize(Number(event.target.value))}>
-          {gridOptions[unitSystem].map((option) => <option key={option.label} value={option.meters}>{option.label}</option>)}
-        </select>
-      </label>
-    </div>
-  );
 }
 
 function FurnitureItem({
@@ -166,7 +125,7 @@ function FurnitureItem({
   );
 }
 
-function Scene({ project, issues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, gridSize }: RoomCanvasProps & { gridSize: number }) {
+function Scene({ project, issues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand }: RoomCanvasProps) {
   const controls = useRef<OrbitControlsImpl | null>(null);
   const [dragging, setDragging] = useState(false);
   const wallColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex ?? "#e7dfd0";
@@ -185,7 +144,7 @@ function Scene({ project, issues, selectedItemId, onSelectItem, onMoveItem, cuta
         <boxGeometry args={[project.room.width, project.room.length, 0.05]} />
         <meshStandardMaterial color={floorColor} roughness={0.92} />
       </mesh>
-      <FloorGrid width={project.room.width} length={project.room.length} cell={gridSize} />
+      <gridHelper args={[Math.max(project.room.width, project.room.length) + 1, 16, "#92745f", "#c5ae98"]} position={[project.room.width / 2, 0.005, project.room.length / 2]} />
       <mesh position={[-0.04, project.room.height / 2, project.room.length / 2]} castShadow receiveShadow>
         <boxGeometry args={[0.08, project.room.height, project.room.length]} />
         <meshStandardMaterial color={wallColor} />
@@ -228,13 +187,9 @@ function Scene({ project, issues, selectedItemId, onSelectItem, onMoveItem, cuta
 }
 
 export function RoomCanvas(props: RoomCanvasProps) {
-  const { gridSize } = useUnitPreferences();
   return (
-    <div className="room-canvas">
-      <Canvas shadows dpr={[1, 1.6]} camera={{ fov: 42, near: 0.05, far: 100 }} gl={{ antialias: true }}>
-        <Scene {...props} gridSize={gridSize} />
-      </Canvas>
-      <GridScaleLegend />
-    </div>
+    <Canvas shadows dpr={[1, 1.6]} camera={{ fov: 42, near: 0.05, far: 100 }} gl={{ antialias: true }}>
+      <Scene {...props} />
+    </Canvas>
   );
 }

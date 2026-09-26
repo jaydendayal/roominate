@@ -2,17 +2,14 @@
 
 import { FormEvent, useState } from "react";
 import { BookOpenCheck, Box, Check, CircleDollarSign, Lock, Plus, ShieldCheck, Trash2, Unlock, UserPlus, Users } from "lucide-react";
-import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { cents, productFor, purchaseSubtotal } from "@/lib/calculations";
 import type { HousingRule, Product, Project } from "@/lib/types";
-import { fromUnit } from "@/lib/units";
 
 export function ConstraintsPanel({ project, update }: { project: Project; update: (updater: (project: Project) => Project) => void }) {
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [ruleOpen, setRuleOpen] = useState(false);
   const [personName, setPersonName] = useState("");
   const subtotal = purchaseSubtotal(project);
-  const units = useUnitPreferences();
 
   const mutate = (updater: (current: Project) => Project) => update((current) => {
     const next = updater(current);
@@ -30,11 +27,7 @@ export function ConstraintsPanel({ project, update }: { project: Project; update
       sourceURL: null,
       category: String(form.get("category") || "owned"),
       variant: "",
-      dimensions: {
-        width: fromUnit(Number(form.get("width")), units.objectUnit),
-        depth: fromUnit(Number(form.get("depth")), units.objectUnit),
-        height: fromUnit(Number(form.get("height")), units.objectUnit),
-      },
+      dimensions: { width: Number(form.get("width")), depth: Number(form.get("depth")), height: Number(form.get("height")) },
       price: null,
       fieldEvidence: { dimensions: { source: "user_confirmed", confidence: 1, confirmedByUser: true } },
       tags: [],
@@ -94,7 +87,7 @@ export function ConstraintsPanel({ project, update }: { project: Project; update
         <section className="panel-surface constraint-card span-2">
           <div className="section-title-row small-row"><div className="constraint-title"><span className="constraint-icon sage"><Users size={20} /></span><div><h2>People & shared inventory</h2><p>Owned items affect fit, never the purchase subtotal.</p></div></div><button className="secondary-button" onClick={() => setInventoryOpen((value) => !value)}><Plus size={16} /> Add inventory</button></div>
           {inventoryOpen && <form className="inline-form" onSubmit={addInventory}>
-            <label>Item name<input name="name" required placeholder="Mini fridge" /></label><label>Category<input name="category" required placeholder="appliance" /></label><label>Owner<select name="owner">{project.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label><label>Status<select name="status"><option value="owned">Owned</option><option value="planned">Planned</option><option value="tentative">Tentative</option></select></label><label>Width ({units.objectUnit})<input name="width" required type="number" min="0.1" step="0.1" /></label><label>Depth ({units.objectUnit})<input name="depth" required type="number" min="0.1" step="0.1" /></label><label>Height ({units.objectUnit})<input name="height" required type="number" min="0.1" step="0.1" /></label><button className="primary-button" type="submit">Add to room</button>
+            <label>Item name<input name="name" required placeholder="Mini fridge" /></label><label>Category<input name="category" required placeholder="appliance" /></label><label>Owner<select name="owner">{project.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}</select></label><label>Status<select name="status"><option value="owned">Owned</option><option value="planned">Planned</option><option value="tentative">Tentative</option></select></label><label>Width (m)<input name="width" required type="number" min="0.01" step="0.01" /></label><label>Depth (m)<input name="depth" required type="number" min="0.01" step="0.01" /></label><label>Height (m)<input name="height" required type="number" min="0.01" step="0.01" /></label><button className="primary-button" type="submit">Add to room</button>
           </form>}
           <div className="people-row">
             {project.people.map((person) => <div className="person-chip" key={person.id}><i style={{ background: person.color }}>{person.name[0]}</i><span><strong>{person.name}</strong><small>{person.id === project.ownerId ? "Project owner" : "Can edit inventory"}</small></span></div>)}
@@ -105,7 +98,7 @@ export function ConstraintsPanel({ project, update }: { project: Project; update
             {project.items.filter((item) => item.acquisitionStatus === "owned" || item.acquisitionStatus === "planned" || item.acquisitionStatus === "tentative").map((item) => {
               const product = productFor(project, item);
               const owner = project.people.find((person) => person.id === item.ownerId);
-              return <div key={item.id}><span className="inventory-name"><i><Box size={16} /></i><strong>{product?.name}</strong></span><span>{owner?.name}</span><span className="source-chip">{item.acquisitionStatus}</span><span>{product ? units.formatDimensions(product.dimensions) : "Dimensions unknown"}</span><button className="icon-button" title={item.locked ? "Unlock placement" : "Lock placement"} onClick={() => mutate((current) => ({ ...current, items: current.items.map((candidate) => candidate.id === item.id ? { ...candidate, locked: !candidate.locked } : candidate) }))}>{item.locked ? <Lock size={15} /> : <Unlock size={15} />}</button></div>;
+              return <div key={item.id}><span className="inventory-name"><i><Box size={16} /></i><strong>{product?.name}</strong></span><span>{owner?.name}</span><span className="source-chip">{item.acquisitionStatus}</span><span>{product?.dimensions.width?.toFixed(2)} × {product?.dimensions.depth?.toFixed(2)} × {product?.dimensions.height?.toFixed(2)} m</span><button className="icon-button" title={item.locked ? "Unlock placement" : "Lock placement"} onClick={() => mutate((current) => ({ ...current, items: current.items.map((candidate) => candidate.id === item.id ? { ...candidate, locked: !candidate.locked } : candidate) }))}>{item.locked ? <Lock size={15} /> : <Unlock size={15} />}</button></div>;
             })}
           </div>
         </section>
