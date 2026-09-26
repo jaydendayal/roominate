@@ -74,7 +74,14 @@ function unresolvedDuplicate(resolution: DuplicateResolution | undefined) {
   return !resolution;
 }
 
-export function calculateIssues(project: Project): Issue[] {
+export interface IssueOptions {
+  /** Formats a meter length for issue text; defaults to meters. */
+  formatLength?: (meters: number) => string;
+}
+
+const formatMeters = (meters: number) => `${meters.toFixed(2)} m`;
+
+export function calculateIssues(project: Project, { formatLength = formatMeters }: IssueOptions = {}): Issue[] {
   const issues: Issue[] = [];
   const activeItems = project.items.filter((item) => item.purchaseStatus !== "deferred");
 
@@ -135,7 +142,7 @@ export function calculateIssues(project: Project): Issue[] {
           affectedItemIds: [item.id],
           affectedGeometryIds: [project.room.id],
           message: `${product.name} exceeds ceiling height`,
-          detail: `${product.dimensions.height.toFixed(2)} m item vs ${project.room.height.toFixed(2)} m room.`,
+          detail: `${formatLength(product.dimensions.height)} item vs ${formatLength(project.room.height)} room.`,
           suggestedActions: ["Choose a shorter item"],
           status: "open",
         });
