@@ -5,6 +5,7 @@ export type EvidenceSource =
   | "imported_plan"
   | "url"
   | "screenshot"
+  | "retailer_api"
   | "demo_fixture";
 
 export type Confidence = "confirmed" | "likely" | "uncertain";
@@ -18,6 +19,19 @@ export interface Dimensions {
   width: number | null;
   depth: number | null;
   height: number | null;
+}
+
+export interface FurnitureVisualProfile {
+  archetype: "chair" | "couch" | "desk" | "wardrobe" | "hamper" | "beanbag" | "ottoman" | "dresser" | "lamp" | "mirror" | "mini_fridge" | "box";
+  style: "modern" | "traditional" | "industrial" | "minimal" | "soft" | "utility";
+  material: "wood" | "fabric" | "metal" | "plastic" | "glass" | "mixed";
+  silhouette: "slim" | "standard" | "rounded" | "bulky";
+  hasArms: boolean;
+  hasBack: boolean;
+  legStyle: "four_leg" | "pedestal" | "sled" | "solid" | "none";
+  colorHex: string | null;
+  confidence: number;
+  evidence: string;
 }
 
 export interface Evidence {
@@ -92,6 +106,10 @@ export interface Product {
   store: string;
   sourceURL: string | null;
   screenshotDataUrl?: string;
+  imageURL?: string;
+  retailer?: "amazon" | "ikea" | "other";
+  externalId?: string;
+  visualProfile?: FurnitureVisualProfile;
   category: string;
   variant: string;
   dimensions: Dimensions;
@@ -213,5 +231,11 @@ export interface Project {
   cartVersion: number;
   createdAt: string;
   updatedAt: string;
+  collaboration?: {
+    token: string;
+    participantId: string;
+    permission: "view" | "edit";
+    revision: number;
+    expiresAt: string;
+  };
 }
-

@@ -3,4 +3,5 @@ uvicorn[standard]==0.34.0
 httpx==0.28.1
 pydantic==2.10.4
 python-multipart==0.0.20
-
+pillow==12.1.0
+pillow-heif==1.8.0

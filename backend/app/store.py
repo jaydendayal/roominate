@@ -2,14 +2,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import sqlite3
 import threading
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 
 class SpendGuardError(RuntimeError):
+    pass
+
+
+class InviteError(RuntimeError):
+    """A safe, user-facing invite failure."""
+
+
+class InviteConflictError(InviteError):
     pass
 
 
@@ -111,3 +121,167 @@ class AIStore:
             ).fetchone()
         return {"tracked_spend_usd": round(float(row["total"]), 6), "completed_calls": int(row["calls"]), "guard_usd": self.total_guard_usd}
 
+
+class InviteStore:
+    """Token-based development collaboration with optimistic revisions.
+
+    Only a hash of the bearer token is persisted. Possession of the original
+    token grants the permission selected by the person creating the invite.
+    """
+
+    COLORS = ("#D66A4A", "#527D68", "#C3913D", "#6F74A8", "#A35D83", "#467C8C")
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = threading.Lock()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=10)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _initialize(self) -> None:
+        with self._connect() as connection:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS invites (
+                    token_hash TEXT PRIMARY KEY,
+                    project_json TEXT NOT NULL,
+                    project_name TEXT NOT NULL,
+                    inviter_name TEXT NOT NULL,
+                    permission TEXT NOT NULL CHECK(permission IN ('view', 'edit')),
+                    expires_at TEXT NOT NULL,
+                    max_uses INTEGER NOT NULL,
+                    use_count INTEGER NOT NULL DEFAULT 0,
+                    revision INTEGER NOT NULL DEFAULT 1,
+                    revoked INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS invite_members (
+                    token_hash TEXT NOT NULL,
+                    name_key TEXT NOT NULL,
+                    person_id TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY(token_hash, name_key),
+                    FOREIGN KEY(token_hash) REFERENCES invites(token_hash) ON DELETE CASCADE
+                );
+                """
+            )
+
+    @staticmethod
+    def _hash(token: str) -> str:
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    @staticmethod
+    def _active(row: sqlite3.Row) -> None:
+        if row["revoked"]:
+            raise InviteError("This invite has been revoked.")
+        if datetime.fromisoformat(row["expires_at"]) <= datetime.now(UTC):
+            raise InviteError("This invite has expired.")
+
+    def create(self, project: dict[str, Any], inviter_name: str, permission: str, expires_in_hours: int, max_uses: int) -> dict[str, Any]:
+        token = secrets.token_urlsafe(32)
+        token_hash = self._hash(token)
+        expires_at = datetime.now(UTC) + timedelta(hours=expires_in_hours)
+        project_json = json.dumps(project, separators=(",", ":"), allow_nan=False)
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO invites(
+                    token_hash, project_json, project_name, inviter_name,
+                    permission, expires_at, max_uses
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (token_hash, project_json, str(project["name"]), inviter_name, permission, expires_at.isoformat(), max_uses),
+            )
+        return {"token": token, "expires_at": expires_at.isoformat(), "permission": permission, "revision": 1}
+
+    def preview(self, token: str) -> dict[str, Any]:
+        token_hash = self._hash(token)
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM invites WHERE token_hash = ?", (token_hash,)).fetchone()
+        if not row:
+            raise InviteError("This invite link is invalid.")
+        self._active(row)
+        return {
+            "project_name": row["project_name"],
+            "inviter_name": row["inviter_name"],
+            "permission": row["permission"],
+            "expires_at": row["expires_at"],
+            "remaining_uses": max(0, row["max_uses"] - row["use_count"]),
+        }
+
+    def accept(self, token: str, display_name: str) -> dict[str, Any]:
+        token_hash = self._hash(token)
+        display_name = " ".join(display_name.split())
+        if not display_name:
+            raise InviteError("Enter your name.")
+        name_key = display_name.casefold()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM invites WHERE token_hash = ?", (token_hash,)).fetchone()
+            if not row:
+                raise InviteError("This invite link is invalid.")
+            self._active(row)
+            member = connection.execute(
+                "SELECT person_id FROM invite_members WHERE token_hash = ? AND name_key = ?",
+                (token_hash, name_key),
+            ).fetchone()
+            if not member and row["use_count"] >= row["max_uses"]:
+                raise InviteError("This invite has reached its collaborator limit.")
+
+            project = json.loads(row["project_json"])
+            people = project.setdefault("people", [])
+            if member:
+                person_id = member["person_id"]
+                revision = row["revision"]
+            else:
+                existing = next((person for person in people if str(person.get("name", "")).casefold() == name_key), None)
+                person_id = str(existing["id"]) if existing else f"person-{uuid.uuid4()}"
+                if not existing:
+                    people.append({"id": person_id, "name": display_name, "color": self.COLORS[len(people) % len(self.COLORS)]})
+                connection.execute(
+                    "INSERT INTO invite_members(token_hash, name_key, person_id, display_name) VALUES (?, ?, ?, ?)",
+                    (token_hash, name_key, person_id, display_name),
+                )
+                connection.execute(
+                    "UPDATE invites SET use_count = use_count + 1, project_json = ?, revision = revision + 1 WHERE token_hash = ?",
+                    (json.dumps(project, separators=(",", ":"), allow_nan=False), token_hash),
+                )
+                revision = row["revision"] + 1
+            return {
+                "project": project,
+                "participant_id": person_id,
+                "permission": row["permission"],
+                "revision": revision,
+                "expires_at": row["expires_at"],
+            }
+
+    def get_project(self, token: str) -> dict[str, Any]:
+        token_hash = self._hash(token)
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM invites WHERE token_hash = ?", (token_hash,)).fetchone()
+        if not row:
+            raise InviteError("This invite link is invalid.")
+        self._active(row)
+        return {"project": json.loads(row["project_json"]), "permission": row["permission"], "revision": row["revision"]}
+
+    def update_project(self, token: str, project: dict[str, Any], expected_revision: int) -> dict[str, Any]:
+        token_hash = self._hash(token)
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM invites WHERE token_hash = ?", (token_hash,)).fetchone()
+            if not row:
+                raise InviteError("This invite link is invalid.")
+            self._active(row)
+            if row["permission"] != "edit":
+                raise InviteError("This invite is view-only.")
+            if row["revision"] != expected_revision:
+                raise InviteConflictError("The shared room changed elsewhere. Reload it before publishing your edits.")
+            revision = expected_revision + 1
+            connection.execute(
+                "UPDATE invites SET project_json = ?, project_name = ?, revision = ? WHERE token_hash = ?",
+                (json.dumps(project, separators=(",", ":"), allow_nan=False), str(project["name"]), revision, token_hash),
+            )
+        return {"revision": revision}

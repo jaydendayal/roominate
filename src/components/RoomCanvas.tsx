@@ -11,6 +11,7 @@ import { calculateIssues, itemHasConflict, productFor } from "@/lib/calculations
 import { snapItemPosition, stepPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
 import { gridOptions } from "@/lib/units";
+import { FurnitureModel } from "./FurnitureModel";
 
 interface RoomCanvasProps {
   project: Project;
@@ -182,10 +183,9 @@ function FurnitureItem({
 
   return (
     <group position={[position.x, dimensions.height / 2, position.z]} rotation={[0, item.transform?.rotationY ?? 0, 0]}>
-      <mesh castShadow receiveShadow onPointerDown={startDrag}>
-        <boxGeometry args={[dimensions.width, dimensions.height, dimensions.depth]} />
-        <meshStandardMaterial color={color} roughness={0.72} transparent opacity={conflict ? 0.82 : 1} />
-      </mesh>
+      <group onPointerDown={startDrag}>
+        <FurnitureModel category={product.category} name={product.name} dimensions={{ width: dimensions.width, depth: dimensions.depth, height: dimensions.height }} color={color} opacity={conflict ? 0.82 : 1} profile={product.visualProfile} emphasized={selected || conflict} />
+      </group>
       {(selected || conflict) && (
         <lineSegments>
           <edgesGeometry args={[new THREE.BoxGeometry(dimensions.width + 0.025, dimensions.height + 0.025, dimensions.depth + 0.025)]} />

@@ -89,6 +89,16 @@ export function useProjectStore() {
     });
   }, []);
 
-  return { projects, hydrated, saveState, updateProject, createProject, duplicateProject, deleteProject, resetDemo };
-}
+  const importProject = useCallback((project: Project) => {
+    const imported: Project = {
+      ...structuredClone(project),
+      id: `project-${crypto.randomUUID()}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setProjects((current) => [...current, imported]);
+    return imported.id;
+  }, []);
 
+  return { projects, hydrated, saveState, updateProject, createProject, duplicateProject, deleteProject, resetDemo, importProject };
+}

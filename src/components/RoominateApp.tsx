@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -33,6 +33,7 @@ import { ProductsPanel } from "./screens/ProductsPanel";
 import { ConstraintsPanel } from "./screens/ConstraintsPanel";
 import { IssuesPanel } from "./screens/IssuesPanel";
 import { BetterCartPanel } from "./screens/BetterCartPanel";
+import { InviteDialog, JoinInvite } from "./Collaboration";
 
 type Screen = "capture" | "studio" | "products" | "constraints" | "issues" | "better";
 
@@ -107,6 +108,7 @@ function Dashboard({
                     className="inline-name"
                     value={project.name}
                     aria-label="Project name"
+                    readOnly={project.collaboration?.permission === "view"}
                     onChange={(event) => onRename(project.id, event.target.value)}
                   />
                   <p>Updated {new Date(project.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</p>
@@ -158,14 +160,46 @@ function RoominateWorkspace() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [screen, setScreen] = useState<Screen>("studio");
   const [mobileNav, setMobileNav] = useState(false);
-  const [shareNotice, setShareNotice] = useState(false);
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [notice, setNotice] = useState("");
   const [undoProject, setUndoProject] = useState<Project | null>(null);
   const activeProject = store.projects.find((project) => project.id === activeId) ?? null;
   const formatLength = units.formatLength;
   const issues = useMemo(() => (activeProject ? calculateIssues(activeProject, { formatLength }) : []), [activeProject, formatLength]);
   const subtotal = activeProject ? purchaseSubtotal(activeProject) : { amount: 0, complete: true };
 
+  useEffect(() => {
+    setInviteToken(new URL(window.location.href).searchParams.get("invite"));
+  }, []);
+
+  const clearInviteUrl = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("invite");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    setInviteToken(null);
+  };
+
   if (!store.hydrated) return <div className="loading-screen"><span className="brand-mark"><Box /></span><p>Opening your room…</p></div>;
+  if (inviteToken) {
+    return <JoinInvite token={inviteToken} onCancel={clearInviteUrl} onJoined={(accepted) => {
+      const imported: Project = {
+        ...accepted.project,
+        ownerId: accepted.participant_id,
+        collaboration: {
+          token: inviteToken,
+          participantId: accepted.participant_id,
+          permission: accepted.permission,
+          revision: accepted.revision,
+          expiresAt: accepted.expires_at,
+        },
+      };
+      const id = store.importProject(imported);
+      clearInviteUrl();
+      setActiveId(id);
+      setScreen("studio");
+    }} />;
+  }
   if (!activeProject) {
     return (
       <Dashboard
@@ -181,18 +215,13 @@ function RoominateWorkspace() {
   }
 
   const update = (updater: (project: Project) => Project, captureUndo = false) => {
+    if (activeProject.collaboration?.permission === "view") {
+      setNotice("This invitation is view-only. Ask the owner for an edit link.");
+      window.setTimeout(() => setNotice(""), 2600);
+      return;
+    }
     if (captureUndo) setUndoProject(structuredClone(activeProject));
     store.updateProject(activeProject.id, updater);
-  };
-  const share = async () => {
-    const shareText = `Roominate project: ${activeProject.name} (private demo link)`;
-    try {
-      await navigator.clipboard.writeText(`${shareText}\n${window.location.href}`);
-    } catch {
-      // Clipboard may be unavailable in an insecure local context; the notice remains useful.
-    }
-    setShareNotice(true);
-    window.setTimeout(() => setShareNotice(false), 2200);
   };
 
   return (
@@ -205,12 +234,12 @@ function RoominateWorkspace() {
           <span className="header-divider" />
           <div>
             <strong className="project-title">{activeProject.name}</strong>
-            <span className={`save-state ${store.saveState}`}>{store.saveState === "saved" ? <Check size={12} /> : null}{store.saveState}</span>
+            {activeProject.collaboration?.permission === "view" ? <span className="save-state saved"><Users size={12} />view only</span> : <span className={`save-state ${store.saveState}`}>{store.saveState === "saved" ? <Check size={12} /> : null}{store.saveState}</span>}
           </div>
         </div>
         <div className="header-actions">
           {undoProject && <button className="secondary-button compact-button" onClick={() => { update(() => undoProject); setUndoProject(null); }}><RotateCcw size={15} /> Undo</button>}
-          <button className="secondary-button compact-button" onClick={share}><Share2 size={15} /><span className="desktop-only">Share</span></button>
+          <button className="secondary-button compact-button" onClick={() => setInviteOpen(true)}><Share2 size={15} /><span className="desktop-only">Share</span></button>
           <div className="avatars" aria-label="Collaborators">
             {activeProject.people.map((person) => <span key={person.id} style={{ background: person.color }} title={person.name}>{person.name[0]}</span>)}
           </div>
@@ -248,8 +277,8 @@ function RoominateWorkspace() {
           return <button key={item.id} className={screen === item.id ? "active" : ""} onClick={() => setScreen(item.id)}><Icon size={18} /><span>{item.label.replace("3D ", "")}</span>{item.id === "issues" && issues.length > 0 && <b>{issues.length}</b>}</button>;
         })}
       </nav>
-      {shareNotice && <div className="toast"><Check size={16} /> Private project link copied</div>}
+      {inviteOpen && <InviteDialog project={activeProject} onClose={() => setInviteOpen(false)} onProjectChange={(project) => store.updateProject(activeProject.id, () => project)} />}
+      {notice && <div className="toast"><AlertTriangle size={16} /> {notice}</div>}
     </div>
   );
 }
-
