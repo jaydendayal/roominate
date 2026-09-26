@@ -19,6 +19,12 @@ class PaletteCandidate(StrictModel):
 class ProposedFeature(StrictModel):
     kind: Literal["door", "window", "closet", "radiator", "obstacle"]
     label: str = Field(min_length=1, max_length=80)
+    wall: Literal["north", "south", "east", "west", "interior", "unknown"]
+    offset_ratio: float = Field(ge=0, le=1)
+    width_m: float | None = Field(ge=0.1, le=8)
+    depth_m: float | None = Field(ge=0.02, le=8)
+    height_m: float | None = Field(ge=0.1, le=8)
+    elevation_m: float | None = Field(ge=0, le=8)
     confidence: float = Field(ge=0, le=1)
     evidence: str = Field(min_length=1, max_length=180)
 

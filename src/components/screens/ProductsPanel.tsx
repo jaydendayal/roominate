@@ -10,6 +10,8 @@ import type { Evidence, FurnitureVisualProfile, Issue, Product, Project } from "
 import { LengthInput } from "../LengthInput";
 import { ShoppingDiscovery } from "./ShoppingDiscovery";
 import { RetailerCheckout } from "./RetailerCheckout";
+import { ProductModelPreview } from "../ProductModelPreview";
+import { evaluateCandidateFit } from "@/lib/discovery";
 
 interface ProductDraft {
   name: string;
@@ -186,7 +188,9 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       fieldEvidence: { name: confidence(Boolean(draft.name)), dimensions: confidence(Object.values(dimensions).every((value) => value != null)), price: confidence(Boolean(draft.price)) },
       tags: [],
     };
-    changeProject((current) => ({ ...current, products: [...current.products, product], items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.category === "uncategorized" ? [] : [product.category], transform: null, placementType: "floor" }] }));
+    const fit = evaluateCandidateFit(project, product);
+    const transform = fit.status === "fits" ? { position: fit.position, rotationZ: fit.rotationZ } : null;
+    changeProject((current) => ({ ...current, products: [...current.products, product], items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.category === "uncategorized" ? [] : [product.category], transform, placementType: "floor" }] }));
     setDraft(null);
     setUrl("");
     setTab("cart");
@@ -194,7 +198,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
 
   const addProduct = (product: Product) => changeProject((current) => ({ ...current, items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: product.id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.tags.slice(0, 1), transform: null, placementType: "floor" }] }));
 
-  const addDiscoveredProduct = (product: Product, placement: { position: { x: number; z: number }; rotationY: number } | null) => changeProject((current) => ({
+  const addDiscoveredProduct = (product: Product, placement: { position: { x: number; y: number }; rotationZ: number } | null) => changeProject((current) => ({
     ...current,
     products: current.products.some((candidate) => candidate.id === product.id) ? current.products.map((candidate) => candidate.id === product.id ? product : candidate) : [...current.products, product],
     items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: product.id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.tags.slice(0, 1), transform: placement, placementType: "floor" }],
@@ -233,7 +237,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       {tab === "import" && <div className="import-grid">
         <section className="panel-surface import-source">
           <div className="import-type-tabs"><button className={importType === "url" ? "active" : ""} onClick={() => { setImportType("url"); setDraft(null); }}><Link2 size={17} /> Product URL</button><button className={importType === "screenshot" ? "active" : ""} onClick={() => { setImportType("screenshot"); setDraft(null); }}><ImagePlus size={17} /> Screenshot</button></div>
-          {importType === "url" ? <form onSubmit={(event) => void analyzeUrl(event)} className="source-form"><div className="source-icon"><Link2 size={23} /></div><h2>Paste a product link</h2><p>We’ll read available page evidence. Blocked or missing fields stay blank for you to confirm.</p><label>Product URL<input required type="url" placeholder="https://store.com/product" value={url} onChange={(event) => setUrl(event.target.value)} /></label><button className="primary-button full" disabled={status === "loading"}>{status === "loading" ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />} Extract product details</button></form> : <div className="source-form"><div className="source-icon"><ImagePlus size={23} /></div><h2>Upload a screenshot</h2><p>Visible fields become an editable draft. A screenshot never implies a live price.</p><label className="screenshot-dropzone"><input type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif" onChange={(event) => void analyzeScreenshot(event.target.files?.[0] ?? null)} /><Upload size={23} /><strong>Choose product screenshot</strong><small>HEIC, HEIF, PNG, JPEG, or WebP</small></label>{status === "loading" && <div className="loading-row"><LoaderCircle className="spin" size={17} /> Reading visible details…</div>}</div>}
+          {importType === "url" ? <form onSubmit={(event) => void analyzeUrl(event)} className="source-form"><div className="source-icon"><Link2 size={23} /></div><h2>Paste a product link</h2><p>We’ll read available page evidence. Blocked or missing fields stay blank for you to confirm.</p><label>Product URL<input required type="url" placeholder="https://store.com/product" value={url} onChange={(event) => setUrl(event.target.value)} /></label><button className="primary-button full" disabled={status === "loading"}>{status === "loading" ? <LoaderCircle className="spin" size={17} /> : <Search size={17} />} Extract product details</button></form> : <div className="source-form"><div className="source-icon"><ImagePlus size={23} /></div><h2>Create a 3D model from a picture</h2><p>Roominate analyzes the visible product, builds a safe procedural model, and leaves extracted facts editable.</p><label className="screenshot-dropzone"><input aria-label="Product picture" type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif" onChange={(event) => void analyzeScreenshot(event.target.files?.[0] ?? null)} /><Upload size={23} /><strong>Choose product photo or screenshot</strong><small>HEIC, HEIF, PNG, JPEG, or WebP</small></label>{status === "loading" && <div className="loading-row"><LoaderCircle className="spin" size={17} /> Analyzing picture and building model…</div>}</div>}
           {error && <div className="analysis-message error"><AlertCircle size={16} />{error}. Manual entry is still available.</div>}
         </section>
 
@@ -242,13 +246,19 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
             <div className="panel-heading"><div><p className="eyebrow">Review required</p><h2>Confirm product</h2></div><span className="source-chip uncertain">{draft.source}</span></div>
             {draft.screenshotDataUrl && <img className="draft-screenshot" src={draft.screenshotDataUrl} alt="Uploaded product evidence" />}
             {draft.message && <div className="info-note">{draft.message}</div>}
+            {draft.visualProfile && <ProductModelPreview
+              name={draft.name}
+              category={draft.category}
+              profile={draft.visualProfile}
+              dimensions={{ width: Number(draft.width) || null, depth: Number(draft.depth) || null, height: Number(draft.height) || null }}
+            />}
             <div className="form-grid">
               <label className="span-2">Name *<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value, visualProfile: undefined })} placeholder="Product name" /></label>
               <label>Store<input value={draft.store} onChange={(event) => setDraft({ ...draft, store: event.target.value })} placeholder="Unknown" /></label>
               <label>Category<input value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value, visualProfile: undefined })} placeholder="e.g. desk" /></label>
               <label className="span-2">Variant<input value={draft.variant} onChange={(event) => setDraft({ ...draft, variant: event.target.value, visualProfile: undefined })} placeholder="Size / color" /></label>
             </div>
-            <div className="visual-profile-box"><span><Sparkles size={16} /><span><strong>{draft.visualProfile ? `${draft.visualProfile.style} ${draft.visualProfile.archetype.replaceAll("_", " ")}` : "Choose its 3D appearance"}</strong><small>{draft.visualProfile ? `${draft.visualProfile.material} · ${draft.visualProfile.silhouette} · ${Math.round(draft.visualProfile.confidence * 100)}% confidence` : "OpenAI selects from safe procedural model options using the name."}</small></span></span><button className="secondary-button small" disabled={!draft.name.trim() || visualLoading} onClick={() => void generateVisual()}>{visualLoading ? <LoaderCircle className="spin" size={14} /> : <Sparkles size={14} />} {draft.visualProfile ? "Regenerate" : "Generate style"}</button></div>
+            <div className="visual-profile-box"><span><Sparkles size={16} /><span><strong>{draft.visualProfile ? `${draft.visualProfile.style} ${draft.visualProfile.archetype.replaceAll("_", " ")}` : "Choose its 3D appearance"}</strong><small>{draft.visualProfile ? `${draft.visualProfile.material} · ${draft.visualProfile.silhouette} · ${Math.round(draft.visualProfile.confidence * 100)}% confidence` : "OpenAI selects from safe procedural model options using the name."}</small></span></span><button className="secondary-button small" disabled={!draft.name.trim() || visualLoading} onClick={() => void generateVisual()}>{visualLoading ? <LoaderCircle className="spin" size={14} /> : <Sparkles size={14} />} {draft.visualProfile ? "Rebuild from details" : "Generate 3D model"}</button></div>
             <h3 className="form-subheading">Dimensions <small>{units.objectUnit === "in" ? "inches" : "centimeters"}</small></h3>
             <div className="form-grid three">{(["width", "depth", "height"] as const).map((key) => <label key={key}>{key[0].toUpperCase() + key.slice(1)}<LengthInput step={0.1} min={0} unit={units.objectUnit} meters={draft[key]} onChange={(meters) => setDraft((current) => current && { ...current, [key]: meters })} placeholder="Unknown" /></label>)}</div>
             <div className="form-grid"><label>Observed price (USD)<input type="number" step="0.01" min="0" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} placeholder="Unknown" /></label><label>Source URL<input type="url" value={draft.sourceURL} onChange={(event) => setDraft({ ...draft, sourceURL: event.target.value })} placeholder="Optional" /></label></div>

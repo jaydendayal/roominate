@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDemoProject } from "./demo";
-import { calculateIssues, collidingItemIds, itemExceedsRoom, purchaseSubtotal, restsOnSurface, settledElevation, stackedElevation } from "./calculations";
+import { calculateIssues, collidingItemIds, itemBounds, itemExceedsRoom, purchaseSubtotal, restsOnSurface, settledElevation, stackedElevation } from "./calculations";
 import { applyAcceptedProposal, generateProposal } from "./proposals";
 
 describe("Roominate deterministic engines", () => {
@@ -23,6 +23,15 @@ describe("Roominate deterministic engines", () => {
     expect(issues.some((issue) => issue.id === "unplaced-item-micro-jay")).toBe(true);
   });
 
+  it("uses X and Y for floor bounds and rotates footprints around Z", () => {
+    const project = createDemoProject();
+    const item = project.items.find((candidate) => candidate.id === "item-desk")!;
+    item.transform = { position: { x: 1, y: 2 }, rotationZ: Math.PI / 2 };
+    const bounds = itemBounds(project, item)!;
+    expect(bounds.minX).toBeCloseTo(1 - 0.76 / 2);
+    expect(bounds.maxY).toBeCloseTo(2 + 1.52 / 2);
+  });
+
   it("stacks an item moved into another item on top of it", () => {
     const project = createDemoProject();
     const heater = project.items.find((item) => item.id === "item-heater")!;
@@ -36,7 +45,7 @@ describe("Roominate deterministic engines", () => {
   it("treats a stacked item as clear of the item below it", () => {
     const project = createDemoProject();
     const dresser = project.items.find((item) => item.id === "item-dresser")!;
-    project.items = project.items.map((item) => item.id === "item-heater" ? { ...item, transform: { position: dresser.transform!.position, rotationY: 0, elevation: 0.81 } } : item);
+    project.items = project.items.map((item) => item.id === "item-heater" ? { ...item, transform: { position: dresser.transform!.position, rotationZ: 0, elevation: 0.81 } } : item);
     const heater = project.items.find((item) => item.id === "item-heater")!;
     expect(calculateIssues(project).some((issue) => issue.type === "fit" && issue.affectedItemIds.includes("item-heater"))).toBe(false);
     expect(restsOnSurface(project, heater)).toBe(true);
@@ -47,13 +56,13 @@ describe("Roominate deterministic engines", () => {
     const project = createDemoProject();
     const dresser = project.items.find((item) => item.id === "item-dresser")!;
     const heater = project.items.find((item) => item.id === "item-heater")!;
-    const openFloor = { x: 1.9, z: 1.4 };
-    const at = (elevation: number, position = dresser.transform!.position) => ({ ...heater, transform: { position, rotationY: 0, elevation } });
+    const openFloor = { x: 1.9, y: 1.4 };
+    const at = (elevation: number, position = dresser.transform!.position) => ({ ...heater, transform: { position, rotationZ: 0, elevation } });
     expect(settledElevation(project, at(0.81), openFloor)).toBe(0);
     expect(settledElevation(project, at(1.4), openFloor)).toBe(0);
-    expect(settledElevation(project, at(1.4, { x: 1.9, z: 0.55 }), openFloor)).toBe(1.4);
-    expect(settledElevation(project, at(0, { x: 1.9, z: 0.55 }), dresser.transform!.position)).toBeCloseTo(0.81);
-    expect(settledElevation(project, at(0.81), { x: 3.2, z: 0.45 })).toBeCloseTo(0.81);
+    expect(settledElevation(project, at(1.4, { x: 1.9, y: 0.55 }), openFloor)).toBe(1.4);
+    expect(settledElevation(project, at(0, { x: 1.9, y: 0.55 }), dresser.transform!.position)).toBeCloseTo(0.81);
+    expect(settledElevation(project, at(0.81), { x: 3.2, y: 0.45 })).toBeCloseTo(0.81);
   });
 
   it("flags items sinking through the floor or lifted through the ceiling", () => {

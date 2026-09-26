@@ -3,8 +3,8 @@ import type { Dimensions, DuplicateResolution, Issue, Item, Product, Project, Ve
 export interface Bounds {
   minX: number;
   maxX: number;
-  minZ: number;
-  maxZ: number;
+  minY: number;
+  maxY: number;
 }
 
 const currencyFormatters = new Map<string, Intl.NumberFormat>();
@@ -22,10 +22,10 @@ export function productFor(project: Project, item: Item): Product | undefined {
   return project.products.find((product) => product.id === item.productId);
 }
 
-export function rotatedFootprint(dimensions: Dimensions, rotationY: number) {
+export function rotatedFootprint(dimensions: Dimensions, rotationZ: number) {
   if (dimensions.width == null || dimensions.depth == null) return null;
-  const c = Math.abs(Math.cos(rotationY));
-  const s = Math.abs(Math.sin(rotationY));
+  const c = Math.abs(Math.cos(rotationZ));
+  const s = Math.abs(Math.sin(rotationZ));
   return {
     width: dimensions.width * c + dimensions.depth * s,
     depth: dimensions.width * s + dimensions.depth * c,
@@ -36,13 +36,13 @@ export function itemBounds(project: Project, item: Item): Bounds | null {
   if (!item.transform) return null;
   const product = productFor(project, item);
   if (!product) return null;
-  const footprint = rotatedFootprint(product.dimensions, item.transform.rotationY);
+  const footprint = rotatedFootprint(product.dimensions, item.transform.rotationZ);
   if (!footprint) return null;
   return {
     minX: item.transform.position.x - footprint.width / 2,
     maxX: item.transform.position.x + footprint.width / 2,
-    minZ: item.transform.position.z - footprint.depth / 2,
-    maxZ: item.transform.position.z + footprint.depth / 2,
+    minY: item.transform.position.y - footprint.depth / 2,
+    maxY: item.transform.position.y + footprint.depth / 2,
   };
 }
 
@@ -51,7 +51,7 @@ export function itemElevation(item: Item) {
 }
 
 function overlap(a: Bounds, b: Bounds, epsilon = 0.015) {
-  return a.minX < b.maxX - epsilon && a.maxX > b.minX + epsilon && a.minZ < b.maxZ - epsilon && a.maxZ > b.minZ + epsilon;
+  return a.minX < b.maxX - epsilon && a.maxX > b.minX + epsilon && a.minY < b.maxY - epsilon && a.maxY > b.minY + epsilon;
 }
 
 const VERTICAL_EPSILON = 0.005;
@@ -78,7 +78,7 @@ export function itemExceedsRoom(project: Project, item: Item) {
   const box = itemBox(project, item);
   if (!box) return false;
   const { width, length, height } = project.room;
-  return box.minX < 0 || box.maxX > width || box.minZ < 0 || box.maxZ > length
+  return box.minX < 0 || box.maxX > width || box.minY < 0 || box.maxY > length
     || box.bottom < -VERTICAL_EPSILON || box.top > height + VERTICAL_EPSILON;
 }
 
@@ -166,8 +166,8 @@ function zoneBounds(position: Vec2, width: number, depth: number): Bounds {
   return {
     minX: position.x - width / 2,
     maxX: position.x + width / 2,
-    minZ: position.z - depth / 2,
-    maxZ: position.z + depth / 2,
+    minY: position.y - depth / 2,
+    maxY: position.y + depth / 2,
   };
 }
 
@@ -239,7 +239,7 @@ export function physicalIssues(project: Project, { formatLength = formatMeters }
     }
     const bounds = itemBounds(project, item);
     if (bounds) {
-      if (bounds.minX < 0 || bounds.maxX > project.room.width || bounds.minZ < 0 || bounds.maxZ > project.room.length) {
+      if (bounds.minX < 0 || bounds.maxX > project.room.width || bounds.minY < 0 || bounds.maxY > project.room.length) {
         issues.push({
           id: `boundary-${item.id}`,
           type: "fit",

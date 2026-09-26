@@ -8,7 +8,7 @@ import type { Issue, Item, Product, Project, Proposal, ProposalChange, Vec2 } fr
 
 interface Placement {
   position: Vec2;
-  rotationY: number;
+  rotationZ: number;
 }
 
 function applyChange(project: Project, change: ProposalChange): Project {
@@ -17,13 +17,13 @@ function applyChange(project: Project, change: ProposalChange): Project {
     items: project.items.map((item): Item => {
       if (item.id !== change.itemId) return item;
       if (change.type === "replace" && change.replacementProductId) {
-        return { ...item, productId: change.replacementProductId, transform: change.position ? { position: change.position, rotationY: change.rotationY ?? 0 } : item.transform };
+        return { ...item, productId: change.replacementProductId, transform: change.position ? { position: change.position, rotationZ: change.rotationZ ?? 0 } : item.transform };
       }
       if (change.type === "remove" || change.type === "defer") {
         return { ...item, purchaseStatus: "deferred", transform: null };
       }
       if (change.type === "reposition" && change.position) {
-        return { ...item, transform: { position: change.position, rotationY: change.rotationY ?? item.transform?.rotationY ?? 0 } };
+        return { ...item, transform: { position: change.position, rotationZ: change.rotationZ ?? item.transform?.rotationZ ?? 0 } };
       }
       return item;
     }),
@@ -61,8 +61,8 @@ function moved(base: Project, item: Item) {
   if (!original?.transform || !item.transform) return Boolean(item.transform);
   return original.productId !== item.productId
     || original.transform.position.x !== item.transform.position.x
-    || original.transform.position.z !== item.transform.position.z
-    || original.transform.rotationY !== item.transform.rotationY;
+    || original.transform.position.y !== item.transform.position.y
+    || original.transform.rotationZ !== item.transform.rotationZ;
 }
 
 /**
@@ -83,24 +83,24 @@ function findSafePlacement(base: Project, proposed: Project, itemId: string, pro
   const product = world.products.find((candidate) => candidate.id === (productId ?? source?.productId));
   if (!source || !product || !dimensionsKnown(product) || product.dimensions.height! > world.room.height) return null;
   const { width, length } = world.room;
-  const anchor = source.transform?.position ?? { x: width / 2, z: length / 2 };
-  const baseRotation = source.transform?.rotationY ?? 0;
+  const anchor = source.transform?.position ?? { x: width / 2, y: length / 2 };
+  const baseRotation = source.transform?.rotationZ ?? 0;
   const step = Math.max(0.05, Math.min(0.15, Math.max(width, length) / 40));
   const candidates: (Placement & { distance: number })[] = [];
-  for (const rotationY of [baseRotation, baseRotation + Math.PI / 2]) {
+  for (const rotationZ of [baseRotation, baseRotation + Math.PI / 2]) {
     for (let x = step / 2; x < width; x += step) {
-      for (let z = step / 2; z < length; z += step) {
-        const position = { x: Number(x.toFixed(3)), z: Number(z.toFixed(3)) };
+      for (let y = step / 2; y < length; y += step) {
+        const position = { x: Number(x.toFixed(3)), y: Number(y.toFixed(3)) };
         // Small penalty for rotating so an unrotated spot wins ties.
-        candidates.push({ position, rotationY, distance: Math.hypot(position.x - anchor.x, position.z - anchor.z) + (rotationY === baseRotation ? 0 : 0.05) });
+        candidates.push({ position, rotationZ, distance: Math.hypot(position.x - anchor.x, position.y - anchor.y) + (rotationZ === baseRotation ? 0 : 0.05) });
       }
     }
   }
   candidates.sort((a, b) => a.distance - b.distance);
-  for (const { position, rotationY } of candidates) {
-    const trial: Project = { ...world, items: world.items.map((item) => item.id === itemId ? { ...item, productId: product.id, transform: { position, rotationY } } : item) };
+  for (const { position, rotationZ } of candidates) {
+    const trial: Project = { ...world, items: world.items.map((item) => item.id === itemId ? { ...item, productId: product.id, transform: { position, rotationZ } } : item) };
     const blocked = physicalIssues(trial).some((issue) => (issue.type === "fit" || issue.type === "clearance") && issue.affectedItemIds.includes(itemId));
-    if (!blocked) return { position, rotationY };
+    if (!blocked) return { position, rotationZ };
   }
   return null;
 }
@@ -137,7 +137,7 @@ function replaceChange(project: Project, item: Item, option: Substitute, reason:
     itemId: item.id,
     replacementProductId: option.product.id,
     position: option.placement?.position,
-    rotationY: option.placement?.rotationY,
+    rotationZ: option.placement?.rotationZ,
     reason,
     impact: `${saving}; ${needs}${option.placement ? "; placement collision-tested" : "; still unplaced, so fit stays unverified"}.`,
     confidence: option.placement || !item.transform ? "confirmed" : "uncertain",
@@ -164,7 +164,6 @@ export function generateProposal(project: Project): Proposal {
   const blockers: string[] = [];
   const touched = new Set<string>();
   let proposed = project;
-
   const name = (item: Item) => productFor(proposed, item)?.name ?? "This item";
   const editable = (item: Item) => !item.locked && !touched.has(item.id);
   const push = (change: ProposalChange) => {
@@ -265,8 +264,8 @@ export function generateProposal(project: Project): Proposal {
         type: "reposition",
         itemId: item.id,
         position: reposition.position,
-        rotationY: reposition.rotationY,
-        reason: `Move ${name(item)} to the nearest collision-free spot${reposition.rotationY !== (item.transform?.rotationY ?? 0) ? ", rotated 90°" : ""}: ${fitProblem(proposed, issue, item.id)} where it is now.`,
+        rotationZ: reposition.rotationZ,
+        reason: `Move ${name(item)} to the nearest collision-free spot${reposition.rotationZ !== (item.transform?.rotationZ ?? 0) ? ", rotated 90°" : ""}: ${fitProblem(proposed, issue, item.id)} where it is now.`,
         impact: "No cost change; placement collision-tested.",
         confidence: "confirmed",
         accepted: null,
@@ -296,7 +295,7 @@ export function generateProposal(project: Project): Proposal {
       type: "reposition",
       itemId: item.id,
       position: placement.position,
-      rotationY: placement.rotationY,
+      rotationZ: placement.rotationZ,
       reason: `Move ${name(item)} out of the ${zone?.name.toLowerCase() ?? "keep-clear area"}.`,
       impact: `No cost change; ${zone?.confirmed ? "restores confirmed clearance" : "clears an unverified keep-clear area"} without changing ownership.`,
       confidence: issue.confidence,

@@ -50,7 +50,7 @@ MAX_TOTAL_BYTES = 18_000_000
 ALLOWED_IMAGES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 ALLOWED_HEIC = {"image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"}
 ALLOWED_VIDEOS = {"video/mp4", "video/webm", "video/quicktime"}
-PROMPT_VERSION = "2026-09-26.3-furniture-visual-profile"
+PROMPT_VERSION = "2026-09-26.5-room-feature-model"
 
 
 @asynccontextmanager
@@ -317,6 +317,9 @@ async def analyze_room(
         "Analyze the ordered room frames as views of one room. Return only visible, reviewable structure and a small color palette. "
         "Detect strong wall-floor, wall-ceiling, wall-wall, and opening corners as normalized image coordinates where top-left is (0,0). "
         "Trace only clearly visible wall, floor, and ceiling polygons; do not invent points behind furniture or outside a frame. "
+        "List visible doors, windows, closets, radiators, and fixed obstacles as proposed features. Assign a cardinal wall only when overlapping views make it defensible; otherwise use unknown. "
+        "For a wall feature, offset_ratio is its approximate center along that wall from left to right in the clearest frame. For an interior feature it is an approximate horizontal room fraction. "
+        "Return feature dimensions only when a confirmed room scale or explicit reference supports them; otherwise use null. Elevation is zero for floor-standing features and may be estimated for windows only when supported. "
         "Use confirmed dimensions as authoritative scale anchors. Estimate another dimension only when image evidence plus an anchor makes it defensible; "
         "otherwise return null with insufficient_evidence. Never present monocular visual guesses as measurements. "
         "Report occlusion, lens distortion, unmatched views, and missing boundaries in uncertainties. Evidence must identify a 1-based frame number and visible region. "
@@ -450,11 +453,13 @@ async def extract_product_screenshot(
             project_id=project_id,
             operation="product-screenshot",
             system_prompt=(
-                "Extract only text and product facts visibly supported by this screenshot. Convert explicitly labeled dimensions to meters and a displayed USD price to integer cents. "
+                "Treat the image as a product photo or shopping screenshot and identify the single dominant furniture or room product. "
+                "Extract only text and product facts visibly supported by the image. Convert explicitly labeled dimensions to meters and a displayed USD price to integer cents. "
                 "Use null for cropped, illegible, or absent values. A screenshot price is an observation, not a live price. Evidence should name the visible region. "
-                "Classify the visible product into exactly one supported visual archetype and conservative style profile. Use color_hex only when a product color is explicit or clearly visible. Visual fields never change dimensions."
+                "Classify the product's visible silhouette, material, arms, back, legs, and color into exactly one supported procedural visual profile. "
+                "Use color_hex only when a product color is explicit or clearly visible. Visual fields never change dimensions and must not imply photogrammetric reconstruction."
             ),
-            user_text="Extract a reviewable product draft from this screenshot.",
+            user_text="Extract a reviewable product draft and a procedural 3D appearance from this image.",
             result_type=ProductAIResult,
             images=[(data, content_type)],
             max_output_tokens=750,

@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Camera, Check, Crosshair
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { calculateIssues } from "@/lib/calculations";
 import { apiFetch, normalizeImageUpload } from "@/lib/api";
-import type { EvidenceSource, MediaAsset, PaletteSwatch, Project } from "@/lib/types";
+import type { EvidenceSource, MediaAsset, PaletteSwatch, Project, RoomFeature } from "@/lib/types";
 import { LengthInput } from "../LengthInput";
 import { RoomCanvas } from "../RoomCanvas";
 import { GuidedRoomScan } from "./GuidedRoomScan";
@@ -25,12 +25,71 @@ interface RoomAnalysisResponse {
   status: "complete" | "partial" | "manual_fallback" | "cached";
   schema_version: string;
   palette: { hex: string; label: string; confidence: number; evidence: string }[];
-  room: { width_m: number | null; length_m: number | null; height_m: number | null; notes: string[] };
+  room: {
+    width_m: number | null;
+    length_m: number | null;
+    height_m: number | null;
+    notes: string[];
+    features: Array<{
+      kind: RoomFeature["kind"];
+      label: string;
+      wall?: NonNullable<RoomFeature["wall"]>;
+      offset_ratio?: number;
+      width_m?: number | null;
+      depth_m?: number | null;
+      height_m?: number | null;
+      elevation_m?: number | null;
+      confidence: number;
+      evidence: string;
+    }>;
+  };
   corners: { frame_index: number; position: { x: number; y: number }; kind: "wall_floor" | "wall_ceiling" | "wall_wall" | "opening" | "other"; confidence: number; evidence: string }[];
   surfaces: { frame_index: number; kind: "wall" | "floor" | "ceiling"; polygon: { x: number; y: number }[]; confidence: number; evidence: string }[];
   dimension_estimates: { dimension: "width" | "length" | "height"; meters: number | null; confidence: number; basis: "confirmed_reference" | "visual_estimate" | "insufficient_evidence"; evidence: string }[];
   uncertainties: string[];
   message?: string;
+}
+
+const FEATURE_DEFAULTS: Record<RoomFeature["kind"], { width: number; depth: number; height: number; elevation: number }> = {
+  door: { width: 0.9, depth: 0.08, height: 2.03, elevation: 0 },
+  window: { width: 1.2, depth: 0.08, height: 1.05, elevation: 0.9 },
+  closet: { width: 1.1, depth: 0.58, height: 2.05, elevation: 0 },
+  radiator: { width: 0.85, depth: 0.18, height: 0.62, elevation: 0.12 },
+  obstacle: { width: 0.5, depth: 0.5, height: 0.8, elevation: 0 },
+};
+
+function analysisFeatures(result: RoomAnalysisResponse, project: Project): RoomFeature[] {
+  const fallbackWalls = ["south", "north", "west", "east"] as const;
+  return result.room.features.map((feature, index) => {
+    const defaults = FEATURE_DEFAULTS[feature.kind];
+    const proposedWall = feature.wall;
+    const wall = !proposedWall || proposedWall === "unknown" ? fallbackWalls[index % fallbackWalls.length] : proposedWall;
+    const width = feature.width_m ?? defaults.width;
+    const depth = feature.depth_m ?? defaults.depth;
+    const height = feature.height_m ?? defaults.height;
+    const suggestedRatio = Number.isFinite(feature.offset_ratio) ? feature.offset_ratio! : (index + 1) / (result.room.features.length + 1);
+    const ratio = Math.max(0.05, Math.min(0.95, suggestedRatio));
+    let position = { x: project.room.width * ratio, y: project.room.length / 2 };
+    if (wall === "south") position = { x: project.room.width * ratio, y: depth / 2 };
+    if (wall === "north") position = { x: project.room.width * ratio, y: project.room.length - depth / 2 };
+    if (wall === "west") position = { x: depth / 2, y: project.room.length * ratio };
+    if (wall === "east") position = { x: project.room.width - depth / 2, y: project.room.length * ratio };
+    return {
+      id: `ai-feature-${crypto.randomUUID()}`,
+      name: feature.label,
+      kind: feature.kind,
+      position,
+      width,
+      depth,
+      height,
+      elevation: feature.elevation_m ?? defaults.elevation,
+      wall,
+      source: "media_estimate",
+      confidence: feature.confidence,
+      evidence: feature.evidence,
+      confirmed: false,
+    };
+  });
 }
 
 async function fileToAsset(file: File): Promise<MediaAsset> {
@@ -125,7 +184,13 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
       const result = await apiFetch<RoomAnalysisResponse>("/api/v1/analyze-room", { method: "POST", body: form });
       setAnalysisResult(result);
       const palette: PaletteSwatch[] = result.palette.map((swatch, index) => ({ id: `swatch-ai-${Date.now()}-${index}`, hex: swatch.hex, label: swatch.label, source: swatch.evidence, pinned: false }));
-      updateRoom({ palette: palette.length ? palette : project.room.palette, reconstructionStatus: result.status === "manual_fallback" ? "manual" : "estimated" });
+      const detectedFeatures = result.status === "manual_fallback" ? [] : analysisFeatures(result, project);
+      const retainedFeatures = project.room.features.filter((feature) => feature.source !== "media_estimate" || feature.confirmed);
+      updateRoom({
+        palette: palette.length ? palette : project.room.palette,
+        features: [...retainedFeatures, ...detectedFeatures],
+        reconstructionStatus: result.status === "manual_fallback" ? "manual" : "estimated",
+      });
       setAnalysisState("done");
       setAnalysisMessage(result.message ?? "Analysis ready. Confirm the suggested details before using them.");
     } catch (error) {
@@ -206,15 +271,15 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
             ))}
           </div>
           <div className="evidence-note"><Ruler size={17} /><span><strong>Scale is anchored.</strong> The room has a valid floor and positive confirmed dimensions for placement.</span></div>
-          <div className="subsection-title"><h3>Openings & fixed features</h3><button className="text-button" onClick={() => updateRoom({ features: [...project.room.features, { id: `door-${crypto.randomUUID()}`, name: "New door", kind: "door", position: { x: 0.5, z: 0 }, width: 0.9, depth: 0.08, height: 2.03, confirmed: false }] })}><Plus size={15} /> Add</button></div>
+          <div className="subsection-title"><h3>Openings & fixed features</h3><button className="text-button" onClick={() => updateRoom({ features: [...project.room.features, { id: `door-${crypto.randomUUID()}`, name: "New door", kind: "door", position: { x: 0.5, y: 0 }, width: 0.9, depth: 0.08, height: 2.03, confirmed: false }] })}><Plus size={15} /> Add</button></div>
           <div className="feature-list">
-            {project.room.features.map((feature) => <div className="feature-row" key={feature.id}><span><DoorOpen size={17} /><strong>{feature.name}</strong></span><small>{units.formatLength(feature.width, "object")} wide · {feature.confirmed ? "confirmed" : "needs review"}</small></div>)}
+            {project.room.features.map((feature) => <div className="feature-row" key={feature.id}><span><DoorOpen size={17} /><strong>{feature.name}</strong></span><small>{units.formatLength(feature.width, "object")} wide · {feature.wall && feature.wall !== "unknown" ? `${feature.wall} wall · ` : ""}{feature.confirmed ? "confirmed" : "needs review"}</small><span className="feature-actions">{!feature.confirmed && <button className="text-button" onClick={() => updateRoom({ features: project.room.features.map((candidate) => candidate.id === feature.id ? { ...candidate, confirmed: true } : candidate) })}><Check size={13} /> Confirm</button>}<button className="icon-button danger" onClick={() => updateRoom({ features: project.room.features.filter((candidate) => candidate.id !== feature.id) })} aria-label={`Remove ${feature.name}`}><Trash2 size={13} /></button></span></div>)}
             {!project.room.features.length && <p className="empty-row">No openings added yet. Door clearance remains unknown.</p>}
           </div>
         </section>
 
         <section className="capture-preview viewport-card">
-          <div className="preview-heading"><div><p className="eyebrow">Live scaled preview</p><h2>{units.formatLength(project.room.width)} × {units.formatLength(project.room.length)} × {units.formatLength(project.room.height)}</h2></div><span className="source-chip confirmed"><Check size={13} /> measured</span></div>
+          <div className="preview-heading"><div><p className="eyebrow">Live scaled preview</p><h2>{units.formatLength(project.room.width)} × {units.formatLength(project.room.length)} × {units.formatLength(project.room.height)}</h2><small>{project.room.features.length ? `${project.room.features.length} structural feature${project.room.features.length === 1 ? "" : "s"} modeled` : "Analyze room media to add visible doors, windows, and fixed features."}</small></div><span className="source-chip confirmed"><Check size={13} /> measured shell</span></div>
           <div className="capture-canvas"><RoomCanvas project={project} issues={issues} cutaway compact viewCommand={{ type: "reset", nonce: project.room.geometryVersion }} /></div>
           <div className="palette-bar">
             <span><Palette size={16} /> Room palette</span>

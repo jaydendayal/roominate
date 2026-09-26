@@ -27,6 +27,25 @@ def test_room_vision_observations_validate() -> None:
     assert result.dimension_estimates[1].meters is None
 
 
+def test_room_feature_placement_is_bounded_and_reviewable() -> None:
+    payload = valid_result()
+    payload["room"]["features"] = [{
+        "kind": "window",
+        "label": "Rear window",
+        "wall": "north",
+        "offset_ratio": 0.7,
+        "width_m": 1.2,
+        "depth_m": 0.08,
+        "height_m": 1.0,
+        "elevation_m": 0.9,
+        "confidence": 0.82,
+        "evidence": "Frame 1 rear wall",
+    }]
+    result = RoomAIResult.model_validate(payload)
+    assert result.room.features[0].wall == "north"
+    assert result.room.features[0].offset_ratio == 0.7
+
+
 def test_normalized_corner_rejects_out_of_frame_coordinate() -> None:
     payload = valid_result()
     payload["corners"][0]["position"]["x"] = 1.2

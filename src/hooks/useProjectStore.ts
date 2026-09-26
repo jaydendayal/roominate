@@ -10,13 +10,45 @@ interface PersistedState {
   projects: Project[];
 }
 
+type LegacyPosition = { x: number; y?: number; z?: number };
+type LegacyTransform = { position: LegacyPosition; rotationZ?: number; rotationY?: number };
+
+function migrateProjectAxes(source: Project): Project {
+  const project = structuredClone(source);
+  const position = (value: LegacyPosition) => ({ x: value.x, y: value.y ?? value.z ?? 0 });
+  project.room.features = project.room.features.map((feature) => ({ ...feature, position: position(feature.position as LegacyPosition) }));
+  project.room.clearanceZones = project.room.clearanceZones.map((zone) => ({ ...zone, position: position(zone.position as LegacyPosition) }));
+  project.items = project.items.map((item) => {
+    if (!item.transform) return item;
+    const transform = item.transform as unknown as LegacyTransform;
+    return {
+      ...item,
+      transform: {
+        position: position(transform.position),
+        rotationZ: transform.rotationZ ?? transform.rotationY ?? 0,
+      },
+    };
+  });
+  if (project.proposal) {
+    project.proposal.changes = project.proposal.changes.map((change) => {
+      const legacy = change as typeof change & { rotationY?: number };
+      return {
+        ...change,
+        position: change.position ? position(change.position as LegacyPosition) : undefined,
+        rotationZ: change.rotationZ ?? legacy.rotationY,
+      };
+    });
+  }
+  return project;
+}
+
 function loadProjects(): Project[] {
   if (typeof window === "undefined") return [createDemoProject()];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [createDemoProject()];
     const parsed = JSON.parse(raw) as PersistedState;
-    return parsed.projects?.length ? parsed.projects : [createDemoProject()];
+    return parsed.projects?.length ? parsed.projects.map(migrateProjectAxes) : [createDemoProject()];
   } catch {
     return [createDemoProject()];
   }
@@ -91,7 +123,7 @@ export function useProjectStore() {
 
   const importProject = useCallback((project: Project) => {
     const imported: Project = {
-      ...structuredClone(project),
+      ...migrateProjectAxes(project),
       id: `project-${crypto.randomUUID()}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

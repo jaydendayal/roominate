@@ -42,17 +42,17 @@ export function StudioPanel({
 
   // Typed and nudged moves settle like drags: off the top of an item they drop to the floor, into one they land on top.
   const moveTo = (item: Item, position: Vec2) => {
-    const transform = item.transform ?? { position, rotationY: 0 };
+    const transform = item.transform ?? { position, rotationZ: 0 };
     changeItem(item.id, { transform: { ...transform, position, elevation: settledElevation(project, { ...item, transform }, position) } });
   };
 
   const rotateSelected = () => {
     if (!selected) return;
-    const rotationY = (selected.transform?.rotationY ?? 0) + Math.PI / 2;
-    const center = selected.transform?.position ?? { x: project.room.width / 2, z: project.room.length / 2 };
+    const rotationZ = (selected.transform?.rotationZ ?? 0) + Math.PI / 2;
+    const center = selected.transform?.position ?? { x: project.room.width / 2, y: project.room.length / 2 };
     // Rotating swaps width and depth, so re-align edges when snapping is on.
-    const position = units.snapToGrid ? snapItemPosition(project, selected.id, center, units.gridSize, rotationY) : center;
-    changeItem(selected.id, { transform: { ...selected.transform, position, rotationY } });
+    const position = units.snapToGrid ? snapItemPosition(project, selected.id, center, units.gridSize, rotationZ) : center;
+    changeItem(selected.id, { transform: { ...selected.transform, position, rotationZ } });
   };
 
   // Nudges move by exactly the user's step distance from the current position.
@@ -66,12 +66,13 @@ export function StudioPanel({
 
   const moveSelectedAxis = (axis: keyof Vec2, meters: number | null) => {
     if (!selected || meters == null) return;
-    moveTo(selected, { x: selected.transform?.position.x ?? 0, z: selected.transform?.position.z ?? 0, [axis]: meters });
+    const position = { x: selected.transform?.position.x ?? 0, y: selected.transform?.position.y ?? 0, [axis]: meters };
+    moveTo(selected, position);
   };
 
   const setSelectedElevation = (meters: number | null) => {
     if (!selected || meters == null) return;
-    const transform = selected.transform ?? { position: { x: project.room.width / 2, z: project.room.length / 2 }, rotationY: 0 };
+    const transform = selected.transform ?? { position: { x: project.room.width / 2, y: project.room.length / 2 }, rotationZ: 0 };
     changeItem(selected.id, { transform: { ...transform, elevation: meters } });
   };
 
@@ -137,12 +138,12 @@ export function StudioPanel({
             <p className="muted-copy">{units.formatDimensions(selectedProduct.dimensions)} · {selected.placementType}</p>
             <div className="coordinate-grid">
               <label>X ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.x ?? 0} onChange={(meters) => moveSelectedAxis("x", meters)} /></label>
-              <label>Y ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.elevation ?? 0} onChange={setSelectedElevation} /></label>
-              <label>Z ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.z ?? 0} onChange={(meters) => moveSelectedAxis("z", meters)} /></label>
+              <label>Y ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.y ?? 0} onChange={(meters) => moveSelectedAxis("y", meters)} /></label>
+              <label>Z ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.elevation ?? 0} onChange={setSelectedElevation} /></label>
             </div>
             <div className="nudge-row" role="group" aria-label={`Move by ${stepLabel}`}>
               <span>Move {stepLabel}</span>
-              {([["x", -1, "−X", ArrowLeft], ["x", 1, "+X", ArrowRight], ["z", -1, "−Z", ArrowUp], ["z", 1, "+Z", ArrowDown]] as const).map(([axis, direction, label, Icon]) => (
+              {([["x", -1, "−X", ArrowLeft], ["x", 1, "+X", ArrowRight], ["y", -1, "−Y", ArrowUp], ["y", 1, "+Y", ArrowDown]] as const).map(([axis, direction, label, Icon]) => (
                 <button key={label} type="button" className="secondary-button" disabled={selected.locked || !selected.transform} aria-label={`Move ${label} by ${stepLabel}`} title={`Move ${label} by ${stepLabel}`} onClick={() => nudgeSelected(axis, direction)}>
                   <Icon size={14} aria-hidden="true" />{label}
                 </button>

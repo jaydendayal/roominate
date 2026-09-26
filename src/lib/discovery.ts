@@ -2,7 +2,7 @@ import { calculateIssues, rotatedFootprint } from "./calculations";
 import type { Item, Product, Project, Vec2 } from "./types";
 
 export type CandidateFit =
-  | { status: "fits"; position: Vec2; rotationY: number }
+  | { status: "fits"; position: Vec2; rotationZ: number }
   | { status: "does_not_fit" }
   | { status: "unverified" };
 
@@ -22,22 +22,21 @@ export function evaluateCandidateFit(project: Project, product: Product): Candid
   };
   const withCandidate: Project = { ...project, products: [...project.products.filter((candidate) => candidate.id !== product.id), product], items: [...project.items, item] };
   const step = 0.2;
-  for (const rotationY of [0, Math.PI / 2]) {
-    const footprint = rotatedFootprint(product.dimensions, rotationY);
+  for (const rotationZ of [0, Math.PI / 2]) {
+    const footprint = rotatedFootprint(product.dimensions, rotationZ);
     if (!footprint) return { status: "unverified" };
     const minX = footprint.width / 2 + 0.04;
     const maxX = project.room.width - footprint.width / 2 - 0.04;
-    const minZ = footprint.depth / 2 + 0.04;
-    const maxZ = project.room.length - footprint.depth / 2 - 0.04;
-    for (let z = minZ; z <= maxZ + 0.001; z += step) {
+    const minY = footprint.depth / 2 + 0.04;
+    const maxY = project.room.length - footprint.depth / 2 - 0.04;
+    for (let y = minY; y <= maxY + 0.001; y += step) {
       for (let x = minX; x <= maxX + 0.001; x += step) {
-        const position = { x: Number(x.toFixed(3)), z: Number(z.toFixed(3)) };
-        const candidate: Project = { ...withCandidate, items: withCandidate.items.map((candidateItem) => candidateItem.id === item.id ? { ...candidateItem, transform: { position, rotationY } } : candidateItem) };
+        const position = { x: Number(x.toFixed(3)), y: Number(y.toFixed(3)) };
+        const candidate: Project = { ...withCandidate, items: withCandidate.items.map((candidateItem) => candidateItem.id === item.id ? { ...candidateItem, transform: { position, rotationZ } } : candidateItem) };
         const conflict = calculateIssues(candidate).some((issue) => (issue.type === "fit" || issue.type === "clearance") && issue.affectedItemIds.includes(item.id));
-        if (!conflict) return { status: "fits", position, rotationY };
+        if (!conflict) return { status: "fits", position, rotationZ };
       }
     }
   }
   return { status: "does_not_fit" };
 }
-
