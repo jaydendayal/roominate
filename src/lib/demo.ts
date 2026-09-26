@@ -2,125 +2,39 @@ import type { Item, Product, Project } from "./types";
 import { shortlistProducts } from "./shortlist";
 
 const now = "2026-08-15T14:30:00.000Z";
-const price = (amount: number) => ({
-  amount,
-  currency: "USD" as const,
-  observedAt: now,
-  confirmed: true,
-});
 const evidence = {
   source: "demo_fixture" as const,
   confidence: 1,
   confirmedByUser: true,
 };
 
-const coreDemoProducts: Product[] = [
-  {
-    id: "prod-desk-wide",
-    name: "Northline Study Desk",
-    store: "Campus Home",
-    sourceURL: "https://example.com/northline-desk",
-    category: "desk",
-    variant: "60 in / oak",
-    dimensions: { width: 1.52, depth: 0.76, height: 0.76 },
-    price: price(21900),
-    fieldEvidence: { dimensions: evidence, price: evidence },
-    alternativeGroupId: "desk-compact",
-    tags: ["workspace"],
-  },
-  {
-    id: "prod-desk-compact",
-    name: "Milo Compact Desk",
-    store: "Room & Boardwalk",
-    sourceURL: "https://example.com/milo-desk",
-    category: "desk",
-    variant: "43 in / birch",
-    dimensions: { width: 1.09, depth: 0.54, height: 0.75 },
-    price: price(13900),
-    fieldEvidence: { dimensions: evidence, price: evidence },
-    alternativeGroupId: "desk-compact",
-    tags: ["workspace"],
-  },
-  {
-    id: "prod-chair",
-    name: "Loop Task Chair",
-    store: "Campus Home",
-    sourceURL: "https://example.com/loop-chair",
-    category: "chair",
-    variant: "sage",
-    dimensions: { width: 0.62, depth: 0.62, height: 0.91 },
-    price: price(8900),
-    fieldEvidence: { dimensions: evidence, price: evidence },
-    tags: ["seating", "workspace"],
-  },
-  {
-    id: "prod-micro-jay",
-    name: "QuickHeat 0.7 cu ft Microwave",
-    store: "Target",
-    sourceURL: "https://example.com/quickheat-microwave",
-    category: "microwave",
-    variant: "black",
-    dimensions: { width: 0.52, depth: 0.4, height: 0.31 },
-    price: price(11900),
-    fieldEvidence: { dimensions: evidence, price: evidence },
-    tags: ["shared-cooking", "high-wattage"],
-  },
-  {
-    id: "prod-micro-maya",
-    name: "DormWave Compact Microwave",
-    store: "Best Buy",
-    sourceURL: "https://example.com/dormwave-microwave",
-    category: "microwave",
-    variant: "white",
-    dimensions: { width: 0.48, depth: 0.38, height: 0.29 },
-    price: price(9900),
-    fieldEvidence: { dimensions: evidence, price: evidence },
-    tags: ["shared-cooking"],
-  },
-  {
-    id: "prod-heater",
-    name: "CozyCoil Mini Heater",
-    store: "Campus Home",
-    sourceURL: "https://example.com/cozycoil-heater",
-    category: "heater",
-    variant: "cream",
-    dimensions: { width: 0.3, depth: 0.2, height: 0.38 },
-    price: price(6900),
-    fieldEvidence: { dimensions: evidence, price: evidence },
-    tags: ["open-coil", "heating"],
-  },
-  {
-    id: "prod-shelf",
-    name: "Maya’s Cube Shelf",
-    store: "Owned item",
-    sourceURL: null,
-    category: "storage",
-    variant: "white",
-    dimensions: { width: 0.76, depth: 0.3, height: 0.76 },
-    price: null,
-    fieldEvidence: { dimensions: evidence },
-    tags: ["storage"],
-  },
-  {
-    id: "prod-dresser",
-    name: "Provided Dresser",
-    store: "Residence hall",
-    sourceURL: null,
-    category: "storage",
-    variant: "maple",
-    dimensions: { width: 0.91, depth: 0.51, height: 0.81 },
-    price: null,
-    fieldEvidence: { dimensions: evidence },
-    tags: ["storage", "provided"],
-  },
-];
+// The demo room is built only from real shortlist products (no made-up items).
+// A few demo-only annotations give Better Cart something to work with:
+// - alternativeGroupId marks products the group treats as interchangeable, which lets
+//   Better Cart swap between them (other shortlist items are never used as swaps);
+// - "over-3-cu-ft" marks fridges above the Maple Hall size limit for the housing rule.
+const demoAnnotations: Record<string, Partial<Pick<Product, "alternativeGroupId">> & { extraTags?: string[] }> = {
+  "shortlist-lagkapten-alex": { alternativeGroupId: "demo-desks" },
+  "shortlist-torald": { alternativeGroupId: "demo-desks" },
+  "shortlist-igloo-32": { alternativeGroupId: "demo-fridges", extraTags: ["over-3-cu-ft"] },
+  "shortlist-frigidaire-10l": { alternativeGroupId: "demo-fridges" },
+  "shortlist-upstreman-32": { extraTags: ["over-3-cu-ft"] },
+};
 
-export const demoProducts: Product[] = [...coreDemoProducts, ...shortlistProducts];
+export const demoProducts: Product[] = shortlistProducts.map((product) => {
+  const annotation = demoAnnotations[product.id];
+  if (!annotation) return product;
+  const { extraTags = [], ...fields } = annotation;
+  return { ...product, ...fields, tags: [...product.tags, ...extraTags] };
+});
 
+// Positions are chosen so the fixture's own geometry produces the demo issues:
+// the desk crosses the east wall and overlaps the chair, the owned pouf sits in the
+// door swing, and Maya's lamp is not placed yet (fit unverified).
 export const demoItems: Item[] = [
   {
     id: "item-desk",
-    productId: "prod-desk-wide",
+    productId: "shortlist-lagkapten-alex",
     ownerId: "person-jay",
     acquisitionStatus: "buying",
     purchaseStatus: "in_cart",
@@ -132,7 +46,7 @@ export const demoItems: Item[] = [
   },
   {
     id: "item-chair",
-    productId: "prod-chair",
+    productId: "shortlist-flintan",
     ownerId: "person-jay",
     acquisitionStatus: "buying",
     purchaseStatus: "in_cart",
@@ -143,56 +57,56 @@ export const demoItems: Item[] = [
     placementType: "floor",
   },
   {
-    id: "item-micro-jay",
-    productId: "prod-micro-jay",
+    id: "item-fridge",
+    productId: "shortlist-igloo-32",
     ownerId: "person-jay",
     acquisitionStatus: "buying",
     purchaseStatus: "in_cart",
     quantity: 1,
     essentiality: "optional",
-    needsServed: ["shared-cooking"],
-    transform: null,
+    needsServed: ["cold-storage"],
+    transform: { position: { x: 1.9, y: 0.55 }, rotationZ: 0 },
     placementType: "floor",
   },
   {
-    id: "item-micro-maya",
-    productId: "prod-micro-maya",
+    id: "item-lamp-jay",
+    productId: "shortlist-lauters",
+    ownerId: "person-jay",
+    acquisitionStatus: "buying",
+    purchaseStatus: "in_cart",
+    quantity: 1,
+    essentiality: "optional",
+    needsServed: ["room-lighting"],
+    transform: { position: { x: 0.35, y: 2.7 }, rotationZ: 0 },
+    placementType: "floor",
+  },
+  {
+    id: "item-lamp-maya",
+    productId: "shortlist-barlast",
     ownerId: "person-maya",
     acquisitionStatus: "planned",
     purchaseStatus: "in_cart",
     quantity: 1,
     essentiality: "optional",
-    needsServed: ["shared-cooking"],
+    needsServed: ["room-lighting"],
     transform: null,
     placementType: "floor",
   },
   {
-    id: "item-heater",
-    productId: "prod-heater",
-    ownerId: "person-jay",
-    acquisitionStatus: "buying",
-    purchaseStatus: "in_cart",
-    quantity: 1,
-    essentiality: "optional",
-    needsServed: ["warmth"],
-    transform: { position: { x: 1.9, y: 0.55 }, rotationZ: 0 },
-    placementType: "floor",
-  },
-  {
-    id: "item-shelf",
-    productId: "prod-shelf",
+    id: "item-pouf",
+    productId: "shortlist-kjuge",
     ownerId: "person-maya",
     acquisitionStatus: "owned",
     purchaseStatus: "not_purchasing",
     quantity: 1,
-    essentiality: "essential",
-    needsServed: ["storage"],
+    essentiality: "optional",
+    needsServed: ["seating", "storage"],
     transform: { position: { x: 0.58, y: 0.62 }, rotationZ: 0 },
     placementType: "floor",
   },
   {
     id: "item-dresser",
-    productId: "prod-dresser",
+    productId: "shortlist-storklinta-3",
     ownerId: "person-maya",
     acquisitionStatus: "owned",
     purchaseStatus: "not_purchasing",
@@ -279,21 +193,21 @@ export function createDemoProject(): Project {
     },
     products: structuredClone(demoProducts),
     items: structuredClone(demoItems),
-    // $400 keeps the cart over budget after the rule/duplicate fixes, so Better Cart demonstrates a substitution.
+    // $400 keeps the cart over budget after the rule and duplicate fixes, so Better Cart demonstrates a desk swap.
     budgetAmount: 40000,
     budgetCurrency: "USD",
     priorities: ["Stay under budget", "Keep a clear entry", "Preserve workspace"],
     needs: ["workspace", "seating", "storage"],
     rules: [
       {
-        id: "rule-open-coil",
+        id: "rule-fridge-size",
         label: "Maple Hall appliance policy",
-        text: "Open-coil heating appliances are not permitted in student rooms.",
+        text: "Refrigerators larger than 3.0 cubic feet are not permitted in student rooms.",
         sourceURL: null,
         sourceType: "user_note",
         verificationStatus: "confirmed",
         prohibitedCategories: [],
-        prohibitedTags: ["open-coil"],
+        prohibitedTags: ["over-3-cu-ft"],
         dismissed: false,
       },
     ],

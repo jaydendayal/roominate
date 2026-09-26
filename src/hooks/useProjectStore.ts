@@ -50,13 +50,24 @@ function migrateProjectAxes(source: Project): Project {
   return project;
 }
 
+// Made-up products from the original demo fixture, since replaced by real shortlist products.
+const LEGACY_DEMO_PRODUCT_IDS = new Set(["prod-desk-wide", "prod-desk-compact", "prod-chair", "prod-micro-jay", "prod-micro-maya", "prod-heater", "prod-shelf", "prod-dresser"]);
+
+/** Swaps a saved copy of the old demo for the current one, and drops unused made-up products from other projects. */
+function removeLegacyDemoProducts(project: Project): Project {
+  if (!project.products.some((product) => LEGACY_DEMO_PRODUCT_IDS.has(product.id))) return project;
+  if (project.id === "project-demo") return createDemoProject();
+  const used = new Set(project.items.map((item) => item.productId));
+  return { ...project, products: project.products.filter((product) => !LEGACY_DEMO_PRODUCT_IDS.has(product.id) || used.has(product.id)) };
+}
+
 function loadProjects(): Project[] {
   if (typeof window === "undefined") return [createDemoProject()];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [createDemoProject()];
     const parsed = JSON.parse(raw) as PersistedState;
-    return parsed.projects?.length ? parsed.projects.map(migrateProjectAxes) : [createDemoProject()];
+    return parsed.projects?.length ? parsed.projects.map((project) => migrateProjectAxes(removeLegacyDemoProducts(project))) : [createDemoProject()];
   } catch {
     return [createDemoProject()];
   }

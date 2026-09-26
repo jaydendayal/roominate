@@ -80,6 +80,69 @@ const rows: ShortlistRow[] = [
   ["upstreman-32", "mini fridge", "Amazon", "Upstreman 3.2 cu ft Mini Fridge with Freezer", "Dorm-size, model BR321", 159.99, 18.7, 17.4, 33.1, "Black", "https://www.amazon.com/dp/B09RWFZTWW"],
 ];
 
+// Product photos from the shortlist's "Image URL" column, keyed by row id (matched on the product link).
+const imageURLs: Record<string, string> = {
+  "markus": "https://www.ikea.com/us/en/images/products/markus-office-chair-vissle-dark-gray__0724714_pe734597_s5.jpg?f=xl",
+  "millberget": "https://www.ikea.com/us/en/images/products/millberget-swivel-chair-murum-black__1020142_pe831799_s5.jpg?f=xl",
+  "poang-chair": "https://www.ikea.com/us/en/images/products/poaeng-armchair-birch-veneer-knisa-light-beige__0571500_pe666933_s5.jpg?f=xl",
+  "flintan": "https://www.ikea.com/us/en/images/products/flintan-office-chair-beige__1007198_pe825954_s5.jpg?f=xl",
+  "renberget": "https://www.ikea.com/us/en/images/products/renberget-swivel-chair-bomstad-black__1020135_pe831794_s5.jpg?f=xl",
+  "loberget-malskar": "https://www.ikea.com/us/en/images/products/loberget-malskaer-swivel-chair-white__1078458_pe857202_s5.jpg?f=xl",
+  "glostad": "https://www.ikea.com/us/en/images/products/glostad-loveseat-knisa-dark-gray__1577178_pe1033002_s5.jpg?f=xl",
+  "kivik-sofa": "https://www.ikea.com/us/en/images/products/kivik-sofa-tibbleby-beige-gray__1577303_pe1033081_s5.jpg?f=xl",
+  "friheten-klagshamn": "https://www.ikea.com/us/en/images/products/friheten-klagshamn-sleeper-sectional-3-seat-w-storage-faringe-light-gray__1360641_pe954541_s5.jpg?f=xl",
+  "klippan": "https://www.ikea.com/us/en/images/products/klippan-loveseat-grimsmala-black-beige__1545334_pe1019703_s5.jpg?f=xl",
+  "uppland": "https://www.ikea.com/us/en/images/products/uppland-sofa-blekinge-white__0818564_pe774486_s5.jpg?f=xl",
+  "micke": "https://www.ikea.com/us/en/images/products/micke-desk-white__0736018_pe740345_s5.jpg?f=xl",
+  "linnmon-adils": "https://www.ikea.com/us/en/images/products/linnmon-adils-table-white__0737165_pe740925_s5.jpg?f=xl",
+  "lagkapten-alex": "https://www.ikea.com/us/en/images/products/lagkapten-alex-desk-white__1022432_pe832720_s5.jpg?f=xl",
+  "torald": "https://www.ikea.com/us/en/images/products/torald-desk-white__1055403_pe847976_s5.jpg?f=xl",
+  "lagkapten-adils": "https://www.ikea.com/us/en/images/products/lagkapten-adils-desk-white__0976080_pe812978_s5.jpg?f=xl",
+  "brimnes-wardrobe-3": "https://www.ikea.com/us/en/images/products/brimnes-wardrobe-with-3-doors-white__1268958_pe928897_s5.jpg?f=xl",
+  "kleppstad-wardrobe-3": "https://www.ikea.com/us/en/images/products/kleppstad-wardrobe-with-3-doors-white__0753594_pe748782_s5.jpg?f=xl",
+  "brimnes-wardrobe-2": "https://www.ikea.com/us/en/images/products/brimnes-wardrobe-with-2-doors-white__1268948_pe928889_s5.jpg?f=xl",
+  "kleppstad-wardrobe-2": "https://www.ikea.com/us/en/images/products/kleppstad-wardrobe-with-2-doors-white__0733324_pe748781_s5.jpg?f=xl",
+  "hauga-wardrobe": "https://www.ikea.com/us/en/images/products/hauga-wardrobe-with-sliding-doors-white__0898797_pe782657_s5.jpg?f=xl",
+  "klunka": "https://www.ikea.com/us/en/images/products/klunka-laundry-bag-white-black__0711257_pe728095_s5.jpg?f=xl",
+  "jall": "https://www.ikea.com/us/en/images/products/jaell-laundry-bag-with-stand-white__1195672_pe902553_s5.jpg?f=xl",
+  "torkis": "https://www.ikea.com/us/en/images/products/torkis-flexible-laundry-basket-in-outdoor-green__1263445_pe927312_s5.jpg?f=xl",
+  "purrpingla": "https://www.ikea.com/us/en/images/products/purrpingla-laundry-bag-beige__0954079_pe803161_s5.jpg?f=xl",
+  "fyllen": "https://www.ikea.com/us/en/images/products/fyllen-laundry-basket-white__0711295_pe728133_s5.jpg?f=xl",
+  "hobestluk-velvet": "https://m.media-amazon.com/images/I/71bvfJxL99L._AC_SL1500_.jpg",
+  "kisoy-faux-fur": "https://m.media-amazon.com/images/I/71mXW7DjYfL._AC_SL1500_.jpg",
+  "maxyoyo-foam": "https://m.media-amazon.com/images/I/81K+-5TrgTL._AC_SL1500_.jpg",
+  "hobestluk-lounger": "https://m.media-amazon.com/images/I/81LpNdHT3kL._AC_SL1500_.jpg",
+  "hobestluk-convertible": "https://m.media-amazon.com/images/I/81og9stjWTL._AC_SL1500_.jpg",
+  "big-joe-classic": "https://m.media-amazon.com/images/I/71UNw4kbWJL._AC_SL1500_.jpg",
+  "kjuge": "https://www.ikea.com/us/en/images/products/kjuge-pouf-with-storage-knisa-dark-gray__1245550_pe921664_s5.jpg?f=xl",
+  "gamlehult": "https://www.ikea.com/us/en/images/products/gamlehult-ottoman-with-storage-rattan-anthracite__0672903_pe716940_s5.jpg?f=xl",
+  "oskarshamn": "https://www.ikea.com/us/en/images/products/oskarshamn-ottoman-with-storage-gunnared-black-gray__1118163_pe872958_s5.jpg?f=xl",
+  "poang-ottoman": "https://www.ikea.com/us/en/images/products/poaeng-ottoman-birch-veneer-knisa-light-beige__0571822_pe667070_s5.jpg?f=xl",
+  "kivik-ottoman": "https://www.ikea.com/us/en/images/products/kivik-ottoman-with-storage-tibbleby-beige-gray__1056132_pe848265_s5.jpg?f=xl",
+  "brimnes-dresser": "https://www.ikea.com/us/en/images/products/brimnes-4-drawer-dresser-black__1291238_pe934851_s5.jpg?f=xl",
+  "storklinta-6": "https://www.ikea.com/us/en/images/products/storklinta-6-drawer-dresser-white-anchor-unlock-function__1590235_pe1038874_s5.jpg?f=xl",
+  "storemolla-8": "https://www.ikea.com/us/en/images/products/storemolla-8-drawer-dresser-gray-brown-stained__1258156_pe926282_s5.jpg?f=xl",
+  "storklinta-3": "https://www.ikea.com/us/en/images/products/storklinta-3-drawer-dresser-white-anchor-unlock-function__1344036_pe949704_s5.jpg?f=xl",
+  "hemnes-8": "https://www.ikea.com/us/en/images/products/hemnes-8-drawer-dresser-white-stain__1151400_pe886164_s5.jpg?f=xl",
+  "arstid": "https://www.ikea.com/us/en/images/products/arstid-table-lamp-nickel-plated-white__0609332_pe684455_s5.jpg?f=xl",
+  "tarnaby": "https://www.ikea.com/us/en/images/products/taernaby-table-lamp-dimmable-anthracite__1188962_pe899634_s5.jpg?f=xl",
+  "lersta": "https://www.ikea.com/us/en/images/products/lersta-floor-reading-lamp-aluminum-chrome-effect__0606034_pe681992_s5.jpg?f=xl",
+  "lauters": "https://www.ikea.com/us/en/images/products/lauters-floor-lamp-ash-white__0663863_pe712536_s5.jpg?f=xl",
+  "barlast": "https://www.ikea.com/us/en/images/products/barlast-floor-lamp-black-white__0957676_pe805130_s5.jpg?f=xl",
+  "fado": "https://www.ikea.com/us/en/images/products/fado-table-lamp-white__0606976_pe682645_s5.jpg?f=xl",
+  "nissedal": "https://www.ikea.com/us/en/images/products/nissedal-mirror-black__0637805_pe698601_s5.jpg?f=xl",
+  "lindbyn": "https://www.ikea.com/us/en/images/products/lindbyn-mirror-black__0798827_pe767399_s5.jpg?f=xl",
+  "stockholm-mirror": "https://www.ikea.com/us/en/images/products/stockholm-mirror-walnut-veneer__0633570_pe695904_s5.jpg?f=xl",
+  "hovet": "https://www.ikea.com/us/en/images/products/hovet-mirror-oak-effect-brown__1508321_pe1009494_s5.jpg?f=xl",
+  "karmsund": "https://www.ikea.com/us/en/images/products/karmsund-floor-mirror-black__0633525_pe695899_s5.jpg?f=xl",
+  "frigidaire-efmis171": "https://m.media-amazon.com/images/I/51anIuK1ZLL._AC_SL1500_.jpg",
+  "crownful-4l": "https://m.media-amazon.com/images/I/61U1KbPFJZL._AC_SL1500_.jpg",
+  "cooluli-4l": "https://m.media-amazon.com/images/I/61kGyC6wWtL._AC_SL1500_.jpg",
+  "igloo-32": "https://m.media-amazon.com/images/I/61iovK065sL._AC_SL1500_.jpg",
+  "frigidaire-10l": "https://m.media-amazon.com/images/I/61X8M0XMQXL._AC_SL1500_.jpg",
+  "upstreman-32": "https://m.media-amazon.com/images/I/71lCPxbXICL._AC_SL1500_.jpg",
+};
+
 const inchesToMeters = (inches: number) => Number((inches * 0.0254).toFixed(4));
 
 function dimensions(width: number, depth: number, height: number): Dimensions {
@@ -91,6 +154,7 @@ export const shortlistProducts: Product[] = rows.map(([id, category, store, name
   name,
   store,
   sourceURL,
+  imageURL: imageURLs[id],
   retailer: store === "Amazon" ? "amazon" : "ikea",
   category,
   variant: color,
@@ -103,7 +167,23 @@ export const shortlistProducts: Product[] = rows.map(([id, category, store, name
   tags: [category, description.toLowerCase(), "shortlist"],
 }));
 
+const shortlistById = new Map(shortlistProducts.map((product) => [product.id, product]));
+
+/** Adds missing shortlist products and refreshes photos on shortlist entries saved before they had one. */
 export function mergeShortlistProducts(products: Product[]): Product[] {
   const existing = new Set(products.map((product) => product.id));
-  return [...products, ...shortlistProducts.filter((product) => !existing.has(product.id))];
+  const refreshed = products.map((product) => {
+    const imageURL = shortlistById.get(product.id)?.imageURL;
+    return imageURL && product.imageURL !== imageURL ? { ...product, imageURL } : product;
+  });
+  return [...refreshed, ...shortlistProducts.filter((product) => !existing.has(product.id))];
+}
+
+/** Item types in shortlist order (e.g. "chair", "bean bag"), each with how many products it has. */
+export const shortlistCategories: { category: string; count: number }[] = [...new Set(shortlistProducts.map((product) => product.category))]
+  .map((category) => ({ category, count: shortlistProducts.filter((product) => product.category === category).length }));
+
+/** Shortlist products of one item type from every store, or all of them for "all". */
+export function shortlistByCategory(category: string): Product[] {
+  return category === "all" ? shortlistProducts : shortlistProducts.filter((product) => product.category === category);
 }

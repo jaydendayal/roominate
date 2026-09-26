@@ -11,6 +11,7 @@ import { LengthInput } from "../LengthInput";
 import { ShoppingDiscovery } from "./ShoppingDiscovery";
 import { RetailerCheckout } from "./RetailerCheckout";
 import { ProductModelPreview } from "../ProductModelPreview";
+import { ProductPhoto } from "../ProductPhoto";
 import { initialProductPlacement } from "@/lib/discovery";
 
 interface ProductDraft {
@@ -237,7 +238,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
         <button className={tab === "cart" || tab === "checkout" ? "active" : ""} onClick={() => setTab("cart")}><ShoppingCart size={16} /> Group cart <span>{cartItems.length}</span></button>
       </div>
 
-      {tab === "shop" && <ShoppingDiscovery project={project} onAdd={(product, placement) => { addDiscoveredProduct(product, placement); setTab("cart"); }} onImport={() => setTab("import")} />}
+      {tab === "shop" && <ShoppingDiscovery project={project} onAdd={(product, placement) => { addDiscoveredProduct(product, placement); setTab("cart"); }} onImport={() => { setImportType("url"); setDraft(null); setTab("import"); }} />}
 
       {tab === "catalog" && <section className="panel-surface catalog-panel">
         <div className="catalog-toolbar"><div className="search-box"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search products, categories, stores…" /></div><span>{shownProducts.length} products</span></div>
@@ -245,7 +246,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
           {shownProducts.map((product) => {
             const existing = project.items.filter((item) => item.productId === product.id && item.purchaseStatus !== "deferred").length;
             return <article className="product-card" key={product.id}>
-              <div className="product-art"><Box size={35} /><span>{product.category}</span></div>
+              <div className={`product-art ${product.imageURL ? "has-photo" : ""}`}><ProductPhoto src={product.imageURL} alt={product.name} iconSize={35} /><span>{product.category}</span></div>
               <div className="product-card-copy"><small>{product.store}</small><h3>{product.name}</h3><p>{units.formatDimensions(product.dimensions)}</p>{(product.fieldEvidence.dimensions?.confidence ?? 1) < 0.8 && <span className="source-chip uncertain" title={product.fieldEvidence.dimensions?.note}>Verify dimensions</span>}<div><strong>{product.price ? cents(product.price.amount) : "Price unknown"}</strong><button className="secondary-button small" onClick={() => addProduct(product)}><PackagePlus size={14} /> Add {existing ? "another" : ""}</button></div></div>
             </article>;
           })}
