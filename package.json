@@ -11,8 +11,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "backend:dev": "PYTHONPATH=backend .venv/bin/uvicorn app.main:app --reload --port 8000",
-    "backend:test": "PYTHONPATH=backend .venv/bin/pytest -q backend/tests"
+    "backend:setup": "node scripts/backend.mjs setup",
+    "backend:dev": "node scripts/backend.mjs dev",
+    "backend:test": "node scripts/backend.mjs test"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.6",

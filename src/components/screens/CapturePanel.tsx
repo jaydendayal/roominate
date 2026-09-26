@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Camera, Check, Crosshair, DoorOpen, ImagePlus, LoaderCircle, Palette, Plus, Ruler, ScanLine, Trash2, Upload, Video } from "lucide-react";
+import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { calculateIssues } from "@/lib/calculations";
 import { apiFetch, normalizeImageUpload } from "@/lib/api";
 import type { EvidenceSource, MediaAsset, PaletteSwatch, Project } from "@/lib/types";
+import { LengthInput } from "../LengthInput";
 import { RoomCanvas } from "../RoomCanvas";
 import { GuidedRoomScan } from "./GuidedRoomScan";
 
@@ -57,6 +59,7 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
   const [analysisResult, setAnalysisResult] = useState<RoomAnalysisResponse | null>(null);
   const [guidedScanOpen, setGuidedScanOpen] = useState(false);
   const issues = calculateIssues(project);
+  const units = useUnitPreferences();
   const guidedAssets = project.room.mediaAssets.filter((asset) => asset.name.startsWith("guided-"));
   const analysisAssets = guidedAssets.length >= 5 ? [guidedAssets[0], guidedAssets[2], guidedAssets[4]] : project.room.mediaAssets.slice(0, 3);
 
@@ -66,8 +69,8 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
     proposal: current.proposal ? { ...current.proposal, stale: true } : null,
   }));
 
-  const changeDimension = (key: "width" | "length" | "height", value: number) => {
-    if (!Number.isFinite(value) || value <= 0) return;
+  const changeDimension = (key: "width" | "length" | "height", value: number | null) => {
+    if (value == null || !Number.isFinite(value) || value <= 0) return;
     update((current) => ({
       ...current,
       room: { ...current.room, [key]: value, geometryVersion: current.room.geometryVersion + 1 },
@@ -185,17 +188,17 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
               {analysisResult.corners.filter((corner) => corner.frame_index === index + 1).map((corner, cornerIndex) => <span key={`${corner.kind}-${cornerIndex}`} className={`finding-point ${corner.kind}`} style={{ left: `${corner.position.x * 100}%`, top: `${corner.position.y * 100}%` }} title={`${corner.kind.replaceAll("_", " ")} · ${Math.round(corner.confidence * 100)}%`}><Crosshair size={13} /></span>)}
               <b>Frame {index + 1}</b>
             </div>)}</div>
-            <div className="dimension-suggestions">{analysisResult.dimension_estimates.map((estimate) => <div key={estimate.dimension}><span><strong>{estimate.dimension}</strong><small>{estimate.evidence}</small></span><b>{estimate.meters == null ? "Not enough evidence" : `${estimate.meters.toFixed(2)} m`}</b>{estimate.meters != null && estimate.basis !== "confirmed_reference" ? <button className="text-button" onClick={() => applyEstimate(estimate.dimension, estimate.meters!)}>Use estimate</button> : <span className={`estimate-basis ${estimate.basis}`}>{estimate.basis === "confirmed_reference" ? "confirmed" : "unverified"}</span>}</div>)}</div>
+            <div className="dimension-suggestions">{analysisResult.dimension_estimates.map((estimate) => <div key={estimate.dimension}><span><strong>{estimate.dimension}</strong><small>{estimate.evidence}</small></span><b>{estimate.meters == null ? "Not enough evidence" : units.formatLength(estimate.meters)}</b>{estimate.meters != null && estimate.basis !== "confirmed_reference" ? <button className="text-button" onClick={() => applyEstimate(estimate.dimension, estimate.meters!)}>Use estimate</button> : <span className={`estimate-basis ${estimate.basis}`}>{estimate.basis === "confirmed_reference" ? "confirmed" : "unverified"}</span>}</div>)}</div>
             {!!analysisResult.uncertainties.length && <div className="finding-uncertainties"><AlertTriangle size={15} /><span><strong>Needs review</strong>{analysisResult.uncertainties.slice(0, 3).map((uncertainty) => <small key={uncertainty}>{uncertainty}</small>)}</span></div>}
           </div>}
         </section>
 
         <section className="panel-surface form-card">
-          <div className="step-heading"><span>2</span><div><h2>Confirm dimensions</h2><p>All geometry uses meters internally. These measurements override media estimates.</p></div></div>
+          <div className="step-heading"><span>2</span><div><h2>Confirm dimensions</h2><p>Enter measurements in your preferred units. These measurements override media estimates.</p></div></div>
           <div className="dimension-fields">
             {(["width", "length", "height"] as const).map((key) => (
               <div className="dimension-field" key={key}>
-                <label><span>{key[0].toUpperCase() + key.slice(1)}</span><div className="unit-input"><input type="number" min="0.1" max="30" step="0.01" value={project.room[key]} onChange={(event) => changeDimension(key, Number(event.target.value))} /><b>m</b></div></label>
+                <label><span>{key[0].toUpperCase() + key.slice(1)}</span><div className="unit-input"><LengthInput min={0} step={units.roomUnit === "ft" ? 0.25 : 0.01} unit={units.roomUnit} meters={project.room[key]} onChange={(meters) => changeDimension(key, meters)} /><b>{units.roomUnit}</b></div></label>
                 <select value={project.room.dimensionEvidence[key].source} onChange={(event) => changeEvidence(key, event.target.value as EvidenceSource)} aria-label={`${key} evidence source`}>
                   {(["user_confirmed", "imported_plan", "scan", "media_estimate"] as EvidenceSource[]).map((source) => <option value={source} key={source}>{sourceLabels[source]}</option>)}
                 </select>
@@ -205,13 +208,13 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
           <div className="evidence-note"><Ruler size={17} /><span><strong>Scale is anchored.</strong> The room has a valid floor and positive confirmed dimensions for placement.</span></div>
           <div className="subsection-title"><h3>Openings & fixed features</h3><button className="text-button" onClick={() => updateRoom({ features: [...project.room.features, { id: `door-${crypto.randomUUID()}`, name: "New door", kind: "door", position: { x: 0.5, z: 0 }, width: 0.9, depth: 0.08, height: 2.03, confirmed: false }] })}><Plus size={15} /> Add</button></div>
           <div className="feature-list">
-            {project.room.features.map((feature) => <div className="feature-row" key={feature.id}><span><DoorOpen size={17} /><strong>{feature.name}</strong></span><small>{feature.width.toFixed(2)} m · {feature.confirmed ? "confirmed" : "needs review"}</small></div>)}
+            {project.room.features.map((feature) => <div className="feature-row" key={feature.id}><span><DoorOpen size={17} /><strong>{feature.name}</strong></span><small>{units.formatLength(feature.width, "object")} wide · {feature.confirmed ? "confirmed" : "needs review"}</small></div>)}
             {!project.room.features.length && <p className="empty-row">No openings added yet. Door clearance remains unknown.</p>}
           </div>
         </section>
 
         <section className="capture-preview viewport-card">
-          <div className="preview-heading"><div><p className="eyebrow">Live scaled preview</p><h2>{project.room.width.toFixed(2)} × {project.room.length.toFixed(2)} × {project.room.height.toFixed(2)} m</h2></div><span className="source-chip confirmed"><Check size={13} /> measured</span></div>
+          <div className="preview-heading"><div><p className="eyebrow">Live scaled preview</p><h2>{units.formatLength(project.room.width)} × {units.formatLength(project.room.length)} × {units.formatLength(project.room.height)}</h2></div><span className="source-chip confirmed"><Check size={13} /> measured</span></div>
           <div className="capture-canvas"><RoomCanvas project={project} issues={issues} cutaway compact viewCommand={{ type: "reset", nonce: project.room.geometryVersion }} /></div>
           <div className="palette-bar">
             <span><Palette size={16} /> Room palette</span>

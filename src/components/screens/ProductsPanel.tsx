@@ -1,10 +1,13 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { AlertCircle, Box, Check, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Sparkles, Store, Trash2, Upload } from "lucide-react";
+import { AlertCircle, Box, Check, Download, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Sparkles, Store, Trash2, Upload } from "lucide-react";
+import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { apiFetch, normalizeImageUpload } from "@/lib/api";
 import { cents, productFor } from "@/lib/calculations";
+import { downloadShoppingList } from "@/lib/shoppingList";
 import type { Evidence, FurnitureVisualProfile, Issue, Product, Project } from "@/lib/types";
+import { LengthInput } from "../LengthInput";
 import { ShoppingDiscovery } from "./ShoppingDiscovery";
 import { RetailerCheckout } from "./RetailerCheckout";
 
@@ -14,9 +17,10 @@ interface ProductDraft {
   sourceURL: string;
   category: string;
   variant: string;
-  width: string;
-  depth: string;
-  height: string;
+  /** Meters; null means unknown. */
+  width: number | null;
+  depth: number | null;
+  height: number | null;
   price: string;
   source: "url" | "screenshot";
   screenshotDataUrl?: string;
@@ -62,7 +66,7 @@ function visualProfile(profile: APIVisualProfile): FurnitureVisualProfile {
   return { archetype: profile.archetype, style: profile.style, material: profile.material, silhouette: profile.silhouette, hasArms: profile.has_arms, hasBack: profile.has_back, legStyle: profile.leg_style, colorHex: profile.color_hex, confidence: profile.confidence, evidence: profile.evidence };
 }
 
-const blankDraft = (source: "url" | "screenshot", sourceURL = ""): ProductDraft => ({ name: "", store: "", sourceURL, category: "", variant: "", width: "", depth: "", height: "", price: "", source });
+const blankDraft = (source: "url" | "screenshot", sourceURL = ""): ProductDraft => ({ name: "", store: "", sourceURL, category: "", variant: "", width: null, depth: null, height: null, price: "", source });
 
 function extractedDraft(result: ProductExtractionResponse, source: "url" | "screenshot", fallbackUrl = "", screenshotDataUrl?: string): ProductDraft {
   return {
@@ -71,9 +75,9 @@ function extractedDraft(result: ProductExtractionResponse, source: "url" | "scre
     sourceURL: result.product.source_url ?? fallbackUrl,
     category: result.product.category ?? "",
     variant: result.product.variant ?? "",
-    width: result.product.dimensions.width_m?.toString() ?? "",
-    depth: result.product.dimensions.depth_m?.toString() ?? "",
-    height: result.product.dimensions.height_m?.toString() ?? "",
+    width: result.product.dimensions.width_m,
+    depth: result.product.dimensions.depth_m,
+    height: result.product.dimensions.height_m,
     price: result.product.price ? (result.product.price.amount_cents / 100).toFixed(2) : "",
     source,
     screenshotDataUrl,
@@ -90,6 +94,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const units = useUnitPreferences();
   const [visualLoading, setVisualLoading] = useState(false);
   const shownProducts = useMemo(() => project.products.filter((product) => `${product.name} ${product.category} ${product.store}`.toLowerCase().includes(search.toLowerCase())), [project.products, search]);
 
@@ -163,7 +168,9 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
   const addDraft = () => {
     if (!draft?.name.trim()) return;
     const id = `product-${crypto.randomUUID()}`;
-    const confidence = (value: string): Evidence => ({ source: draft.source, confidence: value ? 0.7 : 0, confirmedByUser: Boolean(value) });
+    const confidence = (present: boolean): Evidence => ({ source: draft.source, confidence: present ? 0.7 : 0, confirmedByUser: present });
+    const positive = (meters: number | null) => (meters != null && Number.isFinite(meters) && meters > 0 ? meters : null);
+    const dimensions = { width: positive(draft.width), depth: positive(draft.depth), height: positive(draft.height) };
     const parsedPrice = draft.price ? Math.round(Number(draft.price) * 100) : null;
     const product: Product = {
       id,
@@ -174,9 +181,9 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       visualProfile: draft.visualProfile,
       category: draft.category.trim().toLowerCase() || "uncategorized",
       variant: draft.variant.trim(),
-      dimensions: { width: draft.width ? Number(draft.width) : null, depth: draft.depth ? Number(draft.depth) : null, height: draft.height ? Number(draft.height) : null },
+      dimensions,
       price: parsedPrice != null && Number.isFinite(parsedPrice) ? { amount: parsedPrice, currency: "USD", observedAt: new Date().toISOString(), confirmed: true } : null,
-      fieldEvidence: { name: confidence(draft.name), dimensions: confidence(draft.width && draft.depth && draft.height), price: confidence(draft.price) },
+      fieldEvidence: { name: confidence(Boolean(draft.name)), dimensions: confidence(Object.values(dimensions).every((value) => value != null)), price: confidence(Boolean(draft.price)) },
       tags: [],
     };
     changeProject((current) => ({ ...current, products: [...current.products, product], items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.category === "uncategorized" ? [] : [product.category], transform: null, placementType: "floor" }] }));
@@ -216,7 +223,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
             const existing = project.items.filter((item) => item.productId === product.id && item.purchaseStatus !== "deferred").length;
             return <article className="product-card" key={product.id}>
               <div className="product-art"><Box size={35} /><span>{product.category}</span></div>
-              <div className="product-card-copy"><small>{product.store}</small><h3>{product.name}</h3><p>{product.dimensions.width != null ? `${product.dimensions.width.toFixed(2)} × ${product.dimensions.depth?.toFixed(2)} × ${product.dimensions.height?.toFixed(2)} m` : "Dimensions unknown"}</p><div><strong>{product.price ? cents(product.price.amount) : "Price unknown"}</strong><button className="secondary-button small" onClick={() => addProduct(product)}><PackagePlus size={14} /> Add {existing ? "another" : ""}</button></div></div>
+              <div className="product-card-copy"><small>{product.store}</small><h3>{product.name}</h3><p>{units.formatDimensions(product.dimensions)}</p><div><strong>{product.price ? cents(product.price.amount) : "Price unknown"}</strong><button className="secondary-button small" onClick={() => addProduct(product)}><PackagePlus size={14} /> Add {existing ? "another" : ""}</button></div></div>
             </article>;
           })}
           {!shownProducts.length && <div className="empty-state"><Box size={28} /><h3>No products yet</h3><p>Import a URL or screenshot, then confirm the extracted details.</p></div>}
@@ -242,17 +249,17 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
               <label className="span-2">Variant<input value={draft.variant} onChange={(event) => setDraft({ ...draft, variant: event.target.value, visualProfile: undefined })} placeholder="Size / color" /></label>
             </div>
             <div className="visual-profile-box"><span><Sparkles size={16} /><span><strong>{draft.visualProfile ? `${draft.visualProfile.style} ${draft.visualProfile.archetype.replaceAll("_", " ")}` : "Choose its 3D appearance"}</strong><small>{draft.visualProfile ? `${draft.visualProfile.material} · ${draft.visualProfile.silhouette} · ${Math.round(draft.visualProfile.confidence * 100)}% confidence` : "OpenAI selects from safe procedural model options using the name."}</small></span></span><button className="secondary-button small" disabled={!draft.name.trim() || visualLoading} onClick={() => void generateVisual()}>{visualLoading ? <LoaderCircle className="spin" size={14} /> : <Sparkles size={14} />} {draft.visualProfile ? "Regenerate" : "Generate style"}</button></div>
-            <h3 className="form-subheading">Dimensions <small>meters</small></h3>
-            <div className="form-grid three"><label>Width<input type="number" step="0.01" min="0" value={draft.width} onChange={(event) => setDraft({ ...draft, width: event.target.value })} placeholder="Unknown" /></label><label>Depth<input type="number" step="0.01" min="0" value={draft.depth} onChange={(event) => setDraft({ ...draft, depth: event.target.value })} placeholder="Unknown" /></label><label>Height<input type="number" step="0.01" min="0" value={draft.height} onChange={(event) => setDraft({ ...draft, height: event.target.value })} placeholder="Unknown" /></label></div>
+            <h3 className="form-subheading">Dimensions <small>{units.objectUnit === "in" ? "inches" : "centimeters"}</small></h3>
+            <div className="form-grid three">{(["width", "depth", "height"] as const).map((key) => <label key={key}>{key[0].toUpperCase() + key.slice(1)}<LengthInput step={0.1} min={0} unit={units.objectUnit} meters={draft[key]} onChange={(meters) => setDraft((current) => current && { ...current, [key]: meters })} placeholder="Unknown" /></label>)}</div>
             <div className="form-grid"><label>Observed price (USD)<input type="number" step="0.01" min="0" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} placeholder="Unknown" /></label><label>Source URL<input type="url" value={draft.sourceURL} onChange={(event) => setDraft({ ...draft, sourceURL: event.target.value })} placeholder="Optional" /></label></div>
-            {(!draft.width || !draft.depth || !draft.height) && <div className="warning-note"><AlertCircle size={16} /><span>Missing dimensions are allowed, but fit will remain unverified.</span></div>}
+            {(draft.width == null || draft.depth == null || draft.height == null) &&<div className="warning-note"><AlertCircle size={16} /><span>Missing dimensions are allowed, but fit will remain unverified.</span></div>}
             <button className="primary-button full" disabled={!draft.name.trim()} onClick={addDraft}><Check size={17} /> Confirm & add to cart</button>
           </>}
         </section>
       </div>}
 
       {tab === "cart" && <section className="panel-surface cart-panel">
-        <div className="panel-heading"><div><p className="eyebrow">Shared group cart</p><h2>Who’s bringing what</h2></div><div className="cart-heading-actions"><span className="source-chip confirmed">{project.people.length} collaborators</span><button className="primary-button small" disabled={!cartItems.length} onClick={() => setTab("checkout")}><ShoppingCart size={14} /> Checkout by store</button></div></div>
+        <div className="panel-heading"><div><p className="eyebrow">Shared group cart</p><h2>Who’s bringing what</h2></div><div className="panel-heading-actions"><span className="source-chip confirmed">{project.people.length} collaborators</span><button className="secondary-button small" disabled={!cartItems.length} onClick={() => downloadShoppingList(project)}><Download size={14} /> Export shopping list</button><button className="primary-button small" disabled={!cartItems.length} onClick={() => setTab("checkout")}><ShoppingCart size={14} /> Checkout by store</button></div></div>
         <div className="cart-table">
           <div className="cart-table-head"><span>Item</span><span>Buyer</span><span>Fit</span><span>Price</span><span /></div>
           {cartItems.map((item) => {

@@ -19,26 +19,24 @@ The repository is a working vertical slice built from the supplied PRD:
 
 ## Run locally
 
-Prerequisites: Node.js 20+, Python 3.12+, and optionally `ffmpeg` for server-side walkthrough-video frame sampling.
+Prerequisites: Node.js 20+, Python 3.12+, and optionally `ffmpeg` for server-side walkthrough-video frame sampling. The commands below are the same on macOS, Linux, and Windows (PowerShell or Command Prompt).
 
 ```bash
 npm install
-python3 -m venv .venv
-.venv/bin/pip install -r backend/requirements-dev.txt
-cp .env.example .env.local
+npm run backend:setup
 ```
 
-Start the backend in one terminal:
+`backend:setup` finds Python 3.12+ (`python3`/`python` on macOS and Linux, the `py` launcher or `python` on Windows), creates `.venv`, and installs `backend/requirements-dev.txt`. Re-run it after backend requirements change.
+
+Copy `.env.example` to `.env.local` (macOS/Linux: `cp .env.example .env.local`; Windows PowerShell: `Copy-Item .env.example .env.local`). Next.js reads it for the frontend, and the backend scripts load `.env` and `.env.local` for FastAPI; variables already set in your shell take precedence.
+
+Start both servers in one terminal:
 
 ```bash
-npm run backend:dev
+npm run dev:all
 ```
 
-Start the frontend in another:
-
-```bash
-npm run dev
-```
+Or run them separately: `npm run backend:dev` (FastAPI on port 8000) and `npm run dev` (Next.js on port 3000). Extra arguments pass through, for example `npm run backend:dev -- --port 8001`.
 
 Open [http://localhost:3000](http://localhost:3000), choose **Open room** on the seeded Maple Hall project, and use **Reset demo** whenever you want the deterministic starting state back.
 
@@ -99,7 +97,7 @@ The seeded demo deliberately derives these issues from fixture geometry and reco
 - an owned roommate shelf blocking the confirmed entry-door swing
 - two roommates planning microwaves for the same shared need
 - an open-coil heater matching a confirmed user-entered housing rule
-- a $595 known subtotal against a $450 group budget
+- a $595 known subtotal against a $400 group budget
 - unplaced cart products whose fit remains unverified
 
 Generate Better Cart to collision-test a compact desk placement, coordinate/defer the duplicate, remove the rule-conflicting heater, and reposition the shelf. With every proposal action accepted, deterministic tests verify a $327 subtotal and resolution of fit, clearance, budget, duplicate, and rule issues; the remaining unplaced microwave is correctly still reported as fit-unverified.

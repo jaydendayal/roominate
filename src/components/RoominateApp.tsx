@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 import { useProjectStore } from "@/hooks/useProjectStore";
+import { UnitPreferencesProvider, useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { calculateIssues, cents, purchaseSubtotal } from "@/lib/calculations";
 import type { Project } from "@/lib/types";
 import { CapturePanel } from "./screens/CapturePanel";
@@ -62,6 +63,7 @@ function Dashboard({
   onReset: () => void;
   onRename: (id: string, name: string) => void;
 }) {
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   return (
     <main className="dashboard-page">
       <header className="marketing-header">
@@ -114,11 +116,21 @@ function Dashboard({
                     <span><CircleDollarSign size={15} /> {cents(subtotal.amount)} / {cents(project.budgetAmount)}</span>
                     <span className={issues.some((issue) => issue.severity === "error") ? "warn-text" : "good-text"}><AlertTriangle size={15} /> {issues.length} open</span>
                   </div>
-                  <div className="project-actions">
-                    <button className="primary-button small" onClick={() => onOpen(project.id)}>Open room</button>
-                    <button className="icon-button" title="Duplicate" onClick={() => onDuplicate(project.id)}><Copy size={16} /></button>
-                    {project.id !== "project-demo" && <button className="icon-button danger" title="Delete" onClick={() => onDelete(project.id)}><Trash2 size={16} /></button>}
-                  </div>
+                  {pendingDeleteId === project.id ? (
+                    <div className="delete-confirm" role="alertdialog" aria-labelledby={`delete-${project.id}`} onKeyDown={(event) => { if (event.key === "Escape") setPendingDeleteId(null); }}>
+                      <p id={`delete-${project.id}`}><strong>Delete “{project.name}”?</strong> Its room, cart, and media are removed from this browser. This can’t be undone.</p>
+                      <div>
+                        <button className="secondary-button small" autoFocus onClick={() => setPendingDeleteId(null)}>Cancel</button>
+                        <button className="danger-button small" onClick={() => { onDelete(project.id); setPendingDeleteId(null); }}><Trash2 size={14} /> Delete room</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="project-actions">
+                      <button className="primary-button small" onClick={() => onOpen(project.id)}>Open room</button>
+                      <button className="icon-button" title="Duplicate" aria-label={`Duplicate ${project.name}`} onClick={() => onDuplicate(project.id)}><Copy size={16} /></button>
+                      {project.id !== "project-demo" && <button className="icon-button danger" title="Delete" aria-label={`Delete ${project.name}`} onClick={() => setPendingDeleteId(project.id)}><Trash2 size={16} /></button>}
+                    </div>
+                  )}
                 </div>
               </article>
             );
@@ -135,7 +147,16 @@ function Dashboard({
 }
 
 export function RoominateApp() {
+  return (
+    <UnitPreferencesProvider>
+      <RoominateWorkspace />
+    </UnitPreferencesProvider>
+  );
+}
+
+function RoominateWorkspace() {
   const store = useProjectStore();
+  const units = useUnitPreferences();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [screen, setScreen] = useState<Screen>("studio");
   const [mobileNav, setMobileNav] = useState(false);
@@ -144,7 +165,8 @@ export function RoominateApp() {
   const [notice, setNotice] = useState("");
   const [undoProject, setUndoProject] = useState<Project | null>(null);
   const activeProject = store.projects.find((project) => project.id === activeId) ?? null;
-  const issues = useMemo(() => (activeProject ? calculateIssues(activeProject) : []), [activeProject]);
+  const formatLength = units.formatLength;
+  const issues = useMemo(() => (activeProject ? calculateIssues(activeProject, { formatLength }) : []), [activeProject, formatLength]);
   const subtotal = activeProject ? purchaseSubtotal(activeProject) : { amount: 0, complete: true };
 
   useEffect(() => {

@@ -1,5 +1,15 @@
-import { calculateIssues, productFor, purchaseSubtotal, rotatedFootprint } from "./calculations";
-import type { Item, Project, Proposal, ProposalChange } from "./types";
+import { calculateIssues, cents, physicalIssues, productFor, purchaseSubtotal } from "./calculations";
+import type { Issue, Item, Product, Project, Proposal, ProposalChange, Vec2 } from "./types";
+
+// Better Cart: deterministic candidate generation for any project (no fixture IDs).
+// Hard constraints (confirmed rules, room geometry, locked items) are resolved first,
+// then duplicates, fit, clearance, and finally budget. Every geometric change is
+// validated with the same physical checks the app uses.
+
+interface Placement {
+  position: Vec2;
+  rotationY: number;
+}
 
 function applyChange(project: Project, change: ProposalChange): Project {
   return {
@@ -21,115 +31,310 @@ function applyChange(project: Project, change: ProposalChange): Project {
   };
 }
 
-function findSafePlacement(project: Project, itemId: string, productId?: string) {
-  const source = project.items.find((item) => item.id === itemId);
-  const product = project.products.find((candidate) => candidate.id === (productId ?? source?.productId));
-  if (!source || !product) return null;
-  const margin = 0.04;
-  const step = 0.18;
-  for (const rotationY of [0, Math.PI / 2]) {
-    const footprint = rotatedFootprint(product.dimensions, rotationY);
-    if (!footprint) continue;
-    const minX = footprint.width / 2 + margin;
-    const maxX = project.room.width - footprint.width / 2 - margin;
-    const minZ = footprint.depth / 2 + margin;
-    const maxZ = project.room.length - footprint.depth / 2 - margin;
-    for (let z = minZ; z <= maxZ + 0.001; z += step) {
-      for (let x = minX; x <= maxX + 0.001; x += step) {
+const active = (project: Project) => project.items.filter((item) => item.purchaseStatus !== "deferred");
+const dimensionsKnown = (product: Product) => Object.values(product.dimensions).every((value) => value != null && value > 0);
+const lineCost = (product: Product | undefined, item: Item) => (product?.price ? product.price.amount * item.quantity : 0);
+const overBudget = (project: Project) => purchaseSubtotal(project).amount - project.budgetAmount;
+
+function ownerName(project: Project, item: Item) {
+  return project.people.find((person) => person.id === item.ownerId)?.name ?? "A roommate";
+}
+
+function violatesConfirmedRule(project: Project, product: Product) {
+  return project.rules.some((rule) => !rule.dismissed && rule.verificationStatus === "confirmed"
+    && (rule.prohibitedCategories.includes(product.category) || product.tags.some((tag) => rule.prohibitedTags.includes(tag))));
+}
+
+/** Needs served by `item` that no other active item would still cover after the change. */
+function uncoveredNeeds(after: Project, item: Item) {
+  return item.needsServed.filter((need) => !active(after).some((other) => other.id !== item.id && other.needsServed.includes(need)));
+}
+
+function needImpact(after: Project, item: Item) {
+  const lost = uncoveredNeeds(after, item);
+  if (!lost.length) return "every need it served is still covered";
+  return `${lost.join(", ")} would no longer be covered (${item.essentiality} item)`;
+}
+
+function moved(base: Project, item: Item) {
+  const original = base.items.find((candidate) => candidate.id === item.id);
+  if (!original?.transform || !item.transform) return Boolean(item.transform);
+  return original.productId !== item.productId
+    || original.transform.position.x !== item.transform.position.x
+    || original.transform.position.z !== item.transform.position.z
+    || original.transform.rotationY !== item.transform.rotationY;
+}
+
+/**
+ * Obstacles for a placement search: every other item at its original spot plus a copy at any
+ * already-proposed new spot. A placement that clears both stays valid for any subset of accepted changes.
+ */
+function placementWorld(base: Project, proposed: Project, itemId: string): Project {
+  const ghosts = proposed.items
+    .filter((item) => item.id !== itemId && item.purchaseStatus !== "deferred" && item.transform && moved(base, item))
+    .map((item) => ({ ...item, id: `ghost-${item.id}` }));
+  return { ...base, items: [...base.items, ...ghosts] };
+}
+
+/** Nearest collision- and clearance-free placement for `itemId` (optionally as `productId`), or null. */
+function findSafePlacement(base: Project, proposed: Project, itemId: string, productId?: string): Placement | null {
+  const world = placementWorld(base, proposed, itemId);
+  const source = world.items.find((item) => item.id === itemId);
+  const product = world.products.find((candidate) => candidate.id === (productId ?? source?.productId));
+  if (!source || !product || !dimensionsKnown(product) || product.dimensions.height! > world.room.height) return null;
+  const { width, length } = world.room;
+  const anchor = source.transform?.position ?? { x: width / 2, z: length / 2 };
+  const baseRotation = source.transform?.rotationY ?? 0;
+  const step = Math.max(0.05, Math.min(0.15, Math.max(width, length) / 40));
+  const candidates: (Placement & { distance: number })[] = [];
+  for (const rotationY of [baseRotation, baseRotation + Math.PI / 2]) {
+    for (let x = step / 2; x < width; x += step) {
+      for (let z = step / 2; z < length; z += step) {
         const position = { x: Number(x.toFixed(3)), z: Number(z.toFixed(3)) };
-        const candidate: Project = {
-          ...project,
-          items: project.items.map((item) => item.id === itemId ? { ...item, productId: product.id, transform: { position, rotationY } } : item),
-        };
-        const conflicts = calculateIssues(candidate).some((issue) =>
-          (issue.type === "fit" || issue.type === "clearance") && issue.affectedItemIds.includes(itemId),
-        );
-        if (!conflicts) return { position, rotationY };
+        // Small penalty for rotating so an unrotated spot wins ties.
+        candidates.push({ position, rotationY, distance: Math.hypot(position.x - anchor.x, position.z - anchor.z) + (rotationY === baseRotation ? 0 : 0.05) });
       }
     }
   }
+  candidates.sort((a, b) => a.distance - b.distance);
+  for (const { position, rotationY } of candidates) {
+    const trial: Project = { ...world, items: world.items.map((item) => item.id === itemId ? { ...item, productId: product.id, transform: { position, rotationY } } : item) };
+    const blocked = physicalIssues(trial).some((issue) => (issue.type === "fit" || issue.type === "clearance") && issue.affectedItemIds.includes(itemId));
+    if (!blocked) return { position, rotationY };
+  }
   return null;
+}
+
+interface Substitute {
+  product: Product;
+  placement: Placement | null;
+  savings: number;
+}
+
+/** Equivalent products (same alternative group or category) with verified dimensions and price that fit and are permitted. */
+function substitutes(base: Project, proposed: Project, item: Item): Substitute[] {
+  const current = productFor(proposed, item);
+  if (!current || item.purchaseStatus !== "in_cart") return [];
+  const options: Substitute[] = [];
+  for (const product of proposed.products) {
+    if (product.id === current.id || !product.price || !dimensionsKnown(product) || violatesConfirmedRule(proposed, product)) continue;
+    const equivalent = (current.alternativeGroupId && product.alternativeGroupId === current.alternativeGroupId) || product.category === current.category;
+    if (!equivalent) continue;
+    const placement = item.transform ? findSafePlacement(base, proposed, item.id, product.id) : null;
+    if (item.transform && !placement) continue;
+    if (!item.transform && product.dimensions.height! > proposed.room.height) continue;
+    options.push({ product, placement, savings: lineCost(current, item) - product.price.amount * item.quantity });
+  }
+  return options.sort((a, b) => b.savings - a.savings);
+}
+
+function replaceChange(project: Project, item: Item, option: Substitute, reason: string): ProposalChange {
+  const saving = option.savings > 0 ? `Saves ${cents(option.savings)}` : option.savings < 0 ? `Costs ${cents(-option.savings)} more` : "Same price";
+  const needs = item.needsServed.length ? `keeps ${item.needsServed.join(", ")} covered` : "same category";
+  return {
+    id: `change-replace-${item.id}`,
+    type: "replace",
+    itemId: item.id,
+    replacementProductId: option.product.id,
+    position: option.placement?.position,
+    rotationY: option.placement?.rotationY,
+    reason,
+    impact: `${saving}; ${needs}${option.placement ? "; placement collision-tested" : "; still unplaced, so fit stays unverified"}.`,
+    confidence: option.placement || !item.transform ? "confirmed" : "uncertain",
+    accepted: null,
+  };
+}
+
+/** Short clause for why an item doesn't fit, e.g. "it overlaps Loop Task Chair". */
+function fitProblem(project: Project, issue: Issue, itemId: string) {
+  if (issue.id.startsWith("ceiling-")) return "it is taller than the ceiling";
+  if (issue.id.startsWith("boundary-")) return "it extends past a wall";
+  const other = project.items.find((item) => item.id !== itemId && issue.affectedItemIds.includes(item.id));
+  return `it overlaps ${other ? productFor(project, other)?.name ?? "another item" : "another item"}`;
+}
+
+function worstFitIssue(issues: Issue[], itemId: string) {
+  return issues.find((issue) => issue.type === "fit" && issue.affectedItemIds.includes(itemId) && !issue.id.startsWith("overlap-"))
+    ?? issues.find((issue) => issue.type === "fit" && issue.affectedItemIds.includes(itemId));
 }
 
 export function generateProposal(project: Project): Proposal {
   const beforeIssues = calculateIssues(project);
   const changes: ProposalChange[] = [];
+  const blockers: string[] = [];
+  const touched = new Set<string>();
   let proposed = project;
-  const desk = project.items.find((item) => productFor(project, item)?.alternativeGroupId === "desk-compact" && productFor(project, item)?.id !== "prod-desk-compact");
-  const compact = project.products.find((product) => product.id === "prod-desk-compact") ?? project.products.find((product) => product.alternativeGroupId && product.alternativeGroupId === productFor(project, desk!)?.alternativeGroupId && product.id !== desk?.productId);
-  if (desk && compact && beforeIssues.some((issue) => issue.affectedItemIds.includes(desk.id) && issue.type === "fit")) {
-    const placement = findSafePlacement(proposed, desk.id, compact.id);
-    const change: ProposalChange = {
-      id: "change-compact-desk",
-      type: "replace",
-      itemId: desk.id,
-      replacementProductId: compact.id,
-      position: placement?.position,
-      rotationY: placement?.rotationY,
-      reason: placement ? `Swap to ${compact.name} at a collision-tested placement.` : `Swap to ${compact.name}; placement still needs review.`,
-      impact: `Saves ${compact.price && productFor(project, desk)?.price ? `$${((productFor(project, desk)!.price!.amount - compact.price.amount) / 100).toFixed(0)}` : "space"}; preserves the workspace need.`,
-      confidence: placement ? "confirmed" : "uncertain",
-      accepted: null,
-    };
+
+  const name = (item: Item) => productFor(proposed, item)?.name ?? "This item";
+  const editable = (item: Item) => !item.locked && !touched.has(item.id);
+  const push = (change: ProposalChange) => {
     changes.push(change);
+    touched.add(change.itemId);
     proposed = applyChange(proposed, change);
-  }
+  };
 
-  const duplicate = calculateIssues(proposed).find((issue) => issue.type === "duplicate");
-  if (duplicate) {
-    const candidates = duplicate.affectedItemIds.map((id) => project.items.find((item) => item.id === id)).filter(Boolean) as Item[];
-    const remove = candidates.sort((a, b) => (productFor(project, b)?.price?.amount ?? 0) - (productFor(project, a)?.price?.amount ?? 0))[0];
-    if (remove && !remove.locked) {
-      const change: ProposalChange = {
-        id: "change-remove-duplicate",
-        type: "defer",
-        itemId: remove.id,
-        reason: `Defer ${productFor(project, remove)?.name}; the roommate cart already covers the same shared need.`,
-        impact: `Removes ${productFor(project, remove)?.price ? `$${(productFor(project, remove)!.price!.amount / 100).toFixed(0)}` : "one item"} without silently changing the buyer of the remaining item.`,
-        confidence: duplicate.confidence,
-        accepted: null,
-      };
-      changes.push(change);
-      proposed = applyChange(proposed, change);
-    }
-  }
-
+  // 1. Confirmed housing rules are hard constraints: swap to a permitted equivalent, otherwise remove.
   for (const issue of calculateIssues(proposed).filter((candidate) => candidate.type === "rule")) {
     const item = proposed.items.find((candidate) => candidate.id === issue.affectedItemIds[0]);
-    if (item && !item.locked && !changes.some((change) => change.itemId === item.id)) {
-      const change: ProposalChange = {
-        id: `change-remove-rule-${item.id}`,
-        type: "remove",
-        itemId: item.id,
-        reason: `Remove ${productFor(project, item)?.name} because it conflicts with a confirmed housing rule.`,
-        impact: "Resolves the rule conflict; warmth remains an unmet optional preference.",
-        confidence: issue.confidence,
-        accepted: null,
-      };
-      changes.push(change);
-      proposed = applyChange(proposed, change);
+    const rule = project.rules.find((candidate) => issue.id.startsWith(`rule-${candidate.id}-`));
+    if (!item || !rule) continue;
+    if (rule.verificationStatus !== "confirmed") {
+      blockers.push(`${name(item)} may conflict with ${rule.label}, but the rule is unconfirmed. Confirm or dismiss it in Constraints before Better Cart changes that item.`);
+      continue;
     }
+    if (!editable(item)) {
+      if (item.locked) blockers.push(`${name(item)} conflicts with ${rule.label} but is locked. Unlock it in Constraints to let Better Cart replace or remove it.`);
+      continue;
+    }
+    const swap = substitutes(project, proposed, item)[0];
+    if (swap) {
+      push(replaceChange(proposed, item, swap, `Replace ${name(item)} with ${swap.product.name}, which ${rule.label} permits.`));
+      continue;
+    }
+    const after = applyChange(proposed, { id: "", type: "remove", itemId: item.id, reason: "", impact: "", confidence: "confirmed", accepted: null });
+    const owned = item.purchaseStatus !== "in_cart";
+    push({
+      id: `change-remove-${item.id}`,
+      type: "remove",
+      itemId: item.id,
+      reason: owned
+        ? `Leave ${ownerName(proposed, item)}’s ${name(item)} out of the room: it conflicts with ${rule.label}.`
+        : `Remove ${name(item)}: it conflicts with ${rule.label}, and no permitted alternative is in the catalog.`,
+      impact: `${owned ? "No cost change" : `Saves ${cents(lineCost(productFor(proposed, item), item))}`}; ${needImpact(after, item)}.`,
+      confidence: issue.confidence,
+      accepted: null,
+    });
   }
 
-  for (const issue of calculateIssues(proposed).filter((candidate) => candidate.type === "clearance")) {
-    const item = proposed.items.find((candidate) => candidate.id === issue.affectedItemIds[0]);
-    if (item && !item.locked && !changes.some((change) => change.itemId === item.id)) {
-      const placement = findSafePlacement(proposed, item.id);
-      if (!placement) continue;
-      const change: ProposalChange = {
+  // 2. Roommate duplicates: defer the pricier optional purchase; never change who buys the kept item.
+  for (const issue of calculateIssues(proposed).filter((candidate) => candidate.type === "duplicate")) {
+    const pair = issue.affectedItemIds.map((id) => proposed.items.find((item) => item.id === id)).filter((item): item is Item => Boolean(item));
+    if (pair.length !== 2 || pair.some((item) => touched.has(item.id))) continue;
+    const drop = pair
+      .filter((item) => editable(item) && item.purchaseStatus === "in_cart" && item.essentiality === "optional")
+      .sort((a, b) => lineCost(productFor(proposed, b), b) - lineCost(productFor(proposed, a), a))[0];
+    if (!drop) {
+      blockers.push(`${ownerName(proposed, pair[0])} and ${ownerName(proposed, pair[1])} both plan ${name(pair[0])} / ${name(pair[1])}. Both are essential or locked, so decide together in Issues whether both are needed.`);
+      continue;
+    }
+    const keep = pair.find((item) => item.id !== drop.id)!;
+    const shared = drop.needsServed.find((need) => keep.needsServed.includes(need)) ?? productFor(proposed, drop)?.category ?? "the same need";
+    push({
+      id: `change-defer-${drop.id}`,
+      type: "defer",
+      itemId: drop.id,
+      reason: `Defer ${ownerName(proposed, drop)}’s ${name(drop)}: ${ownerName(proposed, keep)}’s ${name(keep)} already covers ${shared}. If both are intentional, reject this change.`,
+      impact: `Saves ${cents(lineCost(productFor(proposed, drop), drop))}; ${ownerName(proposed, keep)} keeps their purchase and no buyer is reassigned.`,
+      confidence: issue.confidence,
+      accepted: null,
+    });
+  }
+
+  // 3. Physical fit (outside the room, over the ceiling, overlapping): move, or swap to an equivalent that fits.
+  const lockedIssues = physicalIssues(proposed);
+  for (const item of active(proposed).filter((candidate) => candidate.locked)) {
+    const issue = worstFitIssue(lockedIssues, item.id);
+    // An overlap with an unlocked item can still be solved by moving that item.
+    const solvable = issue?.affectedItemIds.some((id) => id !== item.id && !proposed.items.find((other) => other.id === id)?.locked);
+    if (issue && !solvable) blockers.push(`${name(item)} is locked in place, but ${fitProblem(proposed, issue, item.id)}. Unlock it in Constraints or correct the room measurements.`);
+  }
+  const attempted = new Set<string>();
+  for (;;) {
+    const issues = physicalIssues(proposed);
+    const candidates = active(proposed).filter((item) => editable(item) && !attempted.has(item.id) && worstFitIssue(issues, item.id));
+    if (!candidates.length) break;
+    // Out-of-room/ceiling problems first; for overlaps prefer moving purchases over owned items.
+    candidates.sort((a, b) =>
+      Number(!worstFitIssue(issues, a.id)!.id.startsWith("overlap-") ? 0 : 1) - Number(!worstFitIssue(issues, b.id)!.id.startsWith("overlap-") ? 0 : 1)
+      || Number(a.purchaseStatus !== "in_cart") - Number(b.purchaseStatus !== "in_cart"));
+    const item = candidates[0];
+    attempted.add(item.id);
+    const issue = worstFitIssue(issues, item.id)!;
+    const reposition = issue.id.startsWith("ceiling-") ? null : findSafePlacement(project, proposed, item.id);
+    const swaps = substitutes(project, proposed, item).filter((option) => option.placement);
+    const gap = overBudget(proposed);
+    // Over budget: take the cheapest option that fits. Otherwise keep the chosen product if it can move.
+    const bestSwap = swaps[0];
+    const preferSwap = bestSwap && (!reposition || (gap > 0 && bestSwap.savings > 0));
+    if (preferSwap) {
+      const why = gap > 0 && reposition ? ` It also cuts ${cents(bestSwap.savings)} while the cart is ${cents(gap)} over budget.` : "";
+      push(replaceChange(proposed, item, bestSwap, `Swap ${name(item)} for ${bestSwap.product.name}: ${fitProblem(proposed, issue, item.id)}, and the replacement fits at a collision-tested spot.${why}`));
+    } else if (reposition) {
+      push({
         id: `change-move-${item.id}`,
         type: "reposition",
         itemId: item.id,
-        position: placement.position,
-        rotationY: placement.rotationY,
-        reason: `Move ${productFor(project, item)?.name} away from the entry swing.`,
-        impact: "Restores confirmed door clearance without changing ownership or cost.",
+        position: reposition.position,
+        rotationY: reposition.rotationY,
+        reason: `Move ${name(item)} to the nearest collision-free spot${reposition.rotationY !== (item.transform?.rotationY ?? 0) ? ", rotated 90°" : ""}: ${fitProblem(proposed, issue, item.id)} where it is now.`,
+        impact: "No cost change; placement collision-tested.",
         confidence: "confirmed",
         accepted: null,
-      };
-      changes.push(change);
-      proposed = applyChange(proposed, change);
+      });
+    } else {
+      const product = productFor(proposed, item);
+      blockers.push(`${issue.message}. No collision-free spot or equivalent ${product?.category ?? "item"} in the catalog fits. Re-measure the room, move something else, or import a smaller ${product?.category ?? "option"}.`);
     }
+  }
+
+  // 4. Keep-clear areas (door swings, user-marked zones): move the item out, keeping cost and owner.
+  for (const issue of physicalIssues(proposed).filter((candidate) => candidate.type === "clearance")) {
+    const item = proposed.items.find((candidate) => candidate.id === issue.affectedItemIds[0]);
+    if (!item) continue;
+    if (!editable(item)) {
+      if (item.locked) blockers.push(`${name(item)} blocks a keep-clear area but is locked. Unlock it in Constraints to let Better Cart move it.`);
+      continue;
+    }
+    const zone = proposed.room.clearanceZones.find((candidate) => candidate.id === issue.affectedGeometryIds[0]);
+    const placement = findSafePlacement(project, proposed, item.id);
+    if (!placement) {
+      blockers.push(`${issue.message}, and no collision-free spot outside it was found. Free up floor space or reconsider the item.`);
+      continue;
+    }
+    push({
+      id: `change-move-${item.id}`,
+      type: "reposition",
+      itemId: item.id,
+      position: placement.position,
+      rotationY: placement.rotationY,
+      reason: `Move ${name(item)} out of the ${zone?.name.toLowerCase() ?? "keep-clear area"}.`,
+      impact: `No cost change; ${zone?.confirmed ? "restores confirmed clearance" : "clears an unverified keep-clear area"} without changing ownership.`,
+      confidence: issue.confidence,
+      accepted: null,
+    });
+  }
+
+  // 5. Budget: cheaper equivalents first (needs preserved), then defer optional purchases, biggest savings first.
+  while (overBudget(proposed) > 0) {
+    const gap = overBudget(proposed);
+    const open = active(proposed).filter((item) => editable(item) && item.purchaseStatus === "in_cart");
+    const cheaper = open
+      .flatMap((item) => substitutes(project, proposed, item).filter((option) => option.savings > 0 && (option.placement || !item.transform)).map((option) => ({ item, option })))
+      .sort((a, b) => b.option.savings - a.option.savings)[0];
+    if (cheaper) {
+      push(replaceChange(proposed, cheaper.item, cheaper.option, `Swap ${name(cheaper.item)} for ${cheaper.option.product.name} to close the ${cents(gap)} budget gap.`));
+      continue;
+    }
+    const optional = open
+      .filter((item) => item.essentiality === "optional" && lineCost(productFor(proposed, item), item) > 0)
+      .sort((a, b) => lineCost(productFor(proposed, b), b) - lineCost(productFor(proposed, a), a))[0];
+    if (!optional) {
+      blockers.push(`Still ${cents(gap)} over budget: the remaining items are essential, locked, or have no cheaper equivalent. Raise the budget, mark an item optional, or import a cheaper option.`);
+      break;
+    }
+    const after = applyChange(proposed, { id: "", type: "defer", itemId: optional.id, reason: "", impact: "", confidence: "confirmed", accepted: null });
+    push({
+      id: `change-defer-${optional.id}`,
+      type: "defer",
+      itemId: optional.id,
+      reason: `Defer the optional ${name(optional)} to close the ${cents(gap)} budget gap.`,
+      impact: `Saves ${cents(lineCost(productFor(proposed, optional), optional))}; ${needImpact(after, optional)}.`,
+      confidence: "confirmed",
+      accepted: null,
+    });
+  }
+  if (!purchaseSubtotal(proposed).complete) {
+    blockers.push("Some cart items have no price, so the proposed total is incomplete. Enter their prices to confirm it is within budget.");
   }
 
   const afterIssues = calculateIssues(proposed);
@@ -145,6 +350,7 @@ export function generateProposal(project: Project): Proposal {
     changes,
     resolvedIssueIds: [...beforeIds].filter((id) => !afterIds.has(id)),
     remainingIssueIds: [...afterIds],
+    blockers,
     createdAt: new Date().toISOString(),
     stale: false,
   };

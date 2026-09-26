@@ -2,6 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { AlertCircle, Box, Check, ExternalLink, LoaderCircle, PackagePlus, Search, Store } from "lucide-react";
+import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { apiFetch } from "@/lib/api";
 import { cents } from "@/lib/calculations";
 import { evaluateCandidateFit } from "@/lib/discovery";
@@ -59,6 +60,7 @@ export function ShoppingDiscovery({ project, onAdd, onImport }: { project: Proje
   const [query, setQuery] = useState("compact desk");
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<SearchResponse | null>(null);
+  const units = useUnitPreferences();
   const products = useMemo(() => (response?.listings ?? []).map(productFromListing).map((product) => ({ product, fit: evaluateCandidateFit(project, product) })), [project, response]);
 
   const search = async (event: FormEvent) => {
@@ -82,7 +84,7 @@ export function ShoppingDiscovery({ project, onAdd, onImport }: { project: Proje
       {response && <div className={`retailer-message ${response.available ? "available" : "unavailable"}`}><AlertCircle size={16} /><span>{response.message}</span>{!response.available && <a href={response.browse_url ?? "https://www.amazon.com/"} target="_blank" rel="noopener noreferrer sponsored">Open Amazon <ExternalLink size={13} /></a>}</div>}
       <div className="listing-grid">{products.map(({ product, fit }) => <article key={product.id} className="listing-card">
         <div className="listing-image">{product.imageURL ? <img src={product.imageURL} alt="" /> : <Box size={30} />}</div>
-        <div className="listing-copy"><small>Amazon · API observation</small><h3>{product.name}</h3><p>{product.dimensions.width != null ? `${product.dimensions.width.toFixed(2)} × ${product.dimensions.depth?.toFixed(2)} × ${product.dimensions.height?.toFixed(2)} m` : "Dimensions unavailable"}</p><div className={`candidate-fit ${fit.status.replaceAll("_", "-")}`}>{fit.status === "fits" ? <><Check size={13} /> Placement found</> : fit.status === "does_not_fit" ? <><AlertCircle size={13} /> No valid placement</> : <><AlertCircle size={13} /> Fit unverified</>}</div><footer><strong>{product.price ? cents(product.price.amount) : "Price on Amazon"}</strong><button className="secondary-button small" onClick={() => onAdd(product, fit.status === "fits" ? { position: fit.position, rotationY: fit.rotationY } : null)}><PackagePlus size={14} /> Add to Roominate</button></footer></div>
+        <div className="listing-copy"><small>Amazon · API observation</small><h3>{product.name}</h3><p>{units.formatDimensions(product.dimensions)}</p><div className={`candidate-fit ${fit.status.replaceAll("_", "-")}`}>{fit.status === "fits" ? <><Check size={13} /> Placement found</> : fit.status === "does_not_fit" ? <><AlertCircle size={13} /> No valid placement</> : <><AlertCircle size={13} /> Fit unverified</>}</div><footer><strong>{product.price ? cents(product.price.amount) : "Price on Amazon"}</strong><button className="secondary-button small" onClick={() => onAdd(product, fit.status === "fits" ? { position: fit.position, rotationY: fit.rotationY } : null)}><PackagePlus size={14} /> Add to Roominate</button></footer></div>
       </article>)}</div>
       {!response && <div className="retailer-empty"><Store size={28} /><h3>Search approved Amazon listings</h3><p>Results use the official Creators API when credentials are configured. Complete dimensions are tested against the current room before receiving “placement found.”</p></div>}
     </> : <div className="retailer-empty policy"><Store size={28} /><h3>IKEA requires a permission-based catalog</h3><p>IKEA’s current U.S. terms prohibit automated scraping and deep-linking without written permission. Browse IKEA directly, then paste a product URL or screenshot into Roominate for review.</p><div><a className="secondary-button" href="https://www.ikea.com/us/en/" target="_blank" rel="noopener noreferrer">Open IKEA <ExternalLink size={15} /></a><button className="primary-button" onClick={onImport}>Import an IKEA item</button></div></div>}
