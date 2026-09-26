@@ -17,6 +17,8 @@ export interface ColorGroup {
   label: string;
   defaultName: string;
   options: ColorChoice[];
+  /** Also offer a free-pick custom color (the room's own bed); retailer products offer only their listed colors. */
+  allowCustom?: boolean;
 }
 
 const c = (name: string, hex: string, secondary?: string): ColorChoice => (secondary ? { name, hex, secondary } : { name, hex });
@@ -180,10 +182,27 @@ export const shortlistColors: Record<string, ColorGroup[]> = {
   "upstreman-32": [group("Color", "Black", [c("Black", BLACK), c("Baby Blue", "#a7c7e7"), c("Cameo Pink", "#efbbcc"), c("Mint Green", "#a8e0c8"), c("Snow White", "#f7f7f5"), c("Stainless Steel", "#b4b8bb")])],
 };
 
+// The bed that comes with the room: a wood frame by default, with bedding on top. Both also take a custom color.
+export const bedColorGroups: ColorGroup[] = [
+  {
+    id: "frame", label: "Frame", defaultName: "Natural oak", allowCustom: true, options: [
+      c("Natural oak", "#b98a5a"), c("Light maple", "#d8b98c"), c("Honey pine", "#c9955a"), c("Cherry", "#8a4b2e"),
+      c("Walnut", "#5d4030"), c("Espresso", "#3a2a22"), c("White", WHITE), c("Gray", "#8d8c8a"), c("Black", BLACK),
+    ],
+  },
+  {
+    id: "bedding", label: "Bedding", defaultName: "White", allowCustom: true, options: [
+      c("White", "#f4f2ee"), c("Light gray", "#c9c9c7"), c("Charcoal", "#46484b"), c("Navy", "#2f3e5c"), c("Sky blue", "#a9c5dd"),
+      c("Sage", "#9aab94"), c("Blush", "#e5b9b3"), c("Mustard", "#d4a73c"), c("Burgundy", "#6e2635"),
+    ],
+  },
+];
+
 /** Shortlist row id for a product id like "shortlist-markus". */
 export const shortlistKey = (productId: string) => productId.replace(/^shortlist-/, "");
 
 export function colorGroupsFor(product: Product): ColorGroup[] {
+  if (product.id.startsWith("room-bed-")) return bedColorGroups;
   return shortlistColors[shortlistKey(product.id)] ?? [];
 }
 
@@ -191,10 +210,10 @@ export const isCustomColor = (value: string | undefined): value is string => Boo
 
 /**
  * Chosen option for one group, falling back to the product's listed color. Custom colors apply only
- * to groups without retailer options (imported products); products with known options ignore them.
+ * to groups that allow them or have no retailer options (imported products); other products ignore them.
  */
 export function selectedChoice(group: ColorGroup, value: string | undefined): ColorChoice {
-  if (isCustomColor(value) && !group.options.length) return { name: `Custom ${value.toLowerCase()}`, hex: value.toLowerCase() };
+  if (isCustomColor(value) && (group.allowCustom || !group.options.length)) return { name: `Custom ${value.toLowerCase()}`, hex: value.toLowerCase() };
   return group.options.find((option) => option.name === value) ?? group.options.find((option) => option.name === group.defaultName) ?? group.options[0];
 }
 

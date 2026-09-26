@@ -159,7 +159,8 @@ function SwatchSelect({ options, value, onChange, label }: { options: SwatchOpti
 
 /**
  * Pick a finish for each of a product's color groups (e.g. POÄNG's cover and frame) from the
- * retailer's listed options. Imported products without known options get the listed color or a custom color.
+ * retailer's listed options. Imported products without known options get the listed color or a custom color;
+ * groups marked allowCustom (the room's own bed) list their options plus a custom color.
  */
 export function ColorChoicePicker({ product, selection, onChange, compact = false }: { product: Product; selection: Selection; onChange: (selection: Selection) => void; compact?: boolean }) {
   const known = colorGroupsFor(product);
@@ -176,17 +177,15 @@ export function ColorChoicePicker({ product, selection, onChange, compact = fals
     {groups.map((group) => {
       const value = selection?.[group.id];
       const count = group.options.length;
-      // Products with retailer options (the shortlist) offer only those; custom colors are for imported products.
-      const allowCustom = count === 0;
+      // Retailer products (the shortlist) offer only their listed colors; custom colors are for imported products and the room's own bed.
+      const allowCustom = count === 0 || Boolean(group.allowCustom);
       const custom = allowCustom && isCustomColor(value);
       const choice = count ? selectedChoice(group, value) : null;
       const primary = custom ? value : choice?.hex ?? "#c9c6cf";
+      const customOption: SwatchOption = { value: CUSTOM, label: custom ? `Custom color (${value})` : "Custom color…", background: custom ? swatchStyle(value) : { background: CUSTOM_SWATCH } };
       const options: SwatchOption[] = count
-        ? group.options.map((option) => ({ value: option.name, label: option.name, background: swatchStyle(option.hex, option.secondary) }))
-        : [
-          { value: LISTED, label: group.defaultName, background: { background: "#c9c6cf" } },
-          { value: CUSTOM, label: custom ? `Custom color (${value})` : "Custom color…", background: custom ? swatchStyle(value) : { background: CUSTOM_SWATCH } },
-        ];
+        ? [...group.options.map((option) => ({ value: option.name, label: option.name, background: swatchStyle(option.hex, option.secondary) })), ...(allowCustom ? [customOption] : [])]
+        : [{ value: LISTED, label: group.defaultName, background: { background: "#c9c6cf" } }, customOption];
       return <div className="color-picker-group" key={group.id}>
         <span className="color-picker-label">{group.label}{count > 1 ? <small> · {count} options</small> : null}</span>
         <span className="color-picker-row">

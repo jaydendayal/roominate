@@ -1,4 +1,5 @@
 import type { Item, Product, Project } from "./types";
+import { bedProduct, bedProductId, ROOM_BED_ITEM_ID, setProvidedBed } from "./beds";
 import { shortlistProducts } from "./shortlist";
 
 const now = "2026-08-15T14:30:00.000Z";
@@ -28,10 +29,29 @@ export const demoProducts: Product[] = shortlistProducts.map((product) => {
   return { ...product, ...fields, tags: [...product.tags, ...extraTags] };
 });
 
-// Positions are chosen so the fixture's own geometry produces the demo issues:
-// the desk crosses the east wall and overlaps the chair, the owned pouf sits in the
-// door swing, and Maya's lamp is not placed yet (fit unverified).
+// A tidy dorm layout (the room is 3.66 m west-east by 3.05 m south-north; the entry door
+// swings in at the south-west corner and the window is on the north wall):
+// - the Twin XL bed that comes with the room runs along the north wall, headboard to the west
+//   wall, with Jay's floor lamp beside the headboard as a reading light;
+// - the desk sits under the north window with the chair pulled up to it;
+// - Maya's dresser and Jay's mini fridge stand against the south wall, facing into the room;
+// - Maya's pouf sits against the east wall as spare seating.
+// Nothing collides or blocks the door, so the demo's issues come from the cart instead: the
+// fridge breaks the hall's size rule, both roommates plan a floor lamp (Maya's is not placed
+// yet, so its fit is unverified), and the cart is over budget.
 export const demoItems: Item[] = [
+  {
+    id: ROOM_BED_ITEM_ID,
+    productId: bedProductId("twin_xl"),
+    ownerId: "person-jay",
+    acquisitionStatus: "owned",
+    purchaseStatus: "not_purchasing",
+    quantity: 1,
+    essentiality: "essential",
+    needsServed: ["sleeping"],
+    transform: { position: { x: 1.09, y: 2.52 }, rotationZ: Math.PI / 2 },
+    placementType: "floor",
+  },
   {
     id: "item-desk",
     productId: "shortlist-lagkapten-alex",
@@ -41,7 +61,7 @@ export const demoItems: Item[] = [
     quantity: 1,
     essentiality: "essential",
     needsServed: ["workspace"],
-    transform: { position: { x: 3.28, y: 2.38 }, rotationZ: 0 },
+    transform: { position: { x: 2.9, y: 2.73 }, rotationZ: 0 },
     placementType: "floor",
   },
   {
@@ -53,7 +73,7 @@ export const demoItems: Item[] = [
     quantity: 1,
     essentiality: "essential",
     needsServed: ["workspace", "seating"],
-    transform: { position: { x: 2.48, y: 2.34 }, rotationZ: 0 },
+    transform: { position: { x: 2.9, y: 2.05 }, rotationZ: Math.PI },
     placementType: "floor",
   },
   {
@@ -65,7 +85,7 @@ export const demoItems: Item[] = [
     quantity: 1,
     essentiality: "optional",
     needsServed: ["cold-storage"],
-    transform: { position: { x: 1.9, y: 0.55 }, rotationZ: 0 },
+    transform: { position: { x: 3.42, y: 0.26 }, rotationZ: Math.PI },
     placementType: "floor",
   },
   {
@@ -77,7 +97,7 @@ export const demoItems: Item[] = [
     quantity: 1,
     essentiality: "optional",
     needsServed: ["room-lighting"],
-    transform: { position: { x: 0.35, y: 2.7 }, rotationZ: 0 },
+    transform: { position: { x: 0.22, y: 1.78 }, rotationZ: 0 },
     placementType: "floor",
   },
   {
@@ -101,7 +121,7 @@ export const demoItems: Item[] = [
     quantity: 1,
     essentiality: "optional",
     needsServed: ["seating", "storage"],
-    transform: { position: { x: 0.58, y: 0.62 }, rotationZ: 0 },
+    transform: { position: { x: 3.43, y: 1.35 }, rotationZ: 0 },
     placementType: "floor",
   },
   {
@@ -113,7 +133,7 @@ export const demoItems: Item[] = [
     quantity: 1,
     essentiality: "essential",
     needsServed: ["storage"],
-    transform: { position: { x: 3.08, y: 0.42 }, rotationZ: 0 },
+    transform: { position: { x: 1.75, y: 0.26 }, rotationZ: Math.PI },
     placementType: "floor",
     locked: true,
   },
@@ -135,6 +155,7 @@ export function createDemoProject(): Project {
       width: 3.66,
       length: 3.05,
       height: 2.44,
+      providedBed: "twin_xl",
       dimensionEvidence: {
         width: { ...evidence, source: "imported_plan" },
         length: { ...evidence, source: "user_confirmed" },
@@ -191,7 +212,7 @@ export function createDemoProject(): Project {
         { id: "swatch-sage", hex: "#7f9186", label: "sage accent", source: "walkthrough · furnishing", pinned: false },
       ],
     },
-    products: structuredClone(demoProducts),
+    products: [...structuredClone(demoProducts), bedProduct("twin_xl")],
     items: structuredClone(demoItems),
     // $400 keeps the cart over budget after the rule and duplicate fixes, so Better Cart demonstrates a desk swap.
     budgetAmount: 40000,
@@ -219,9 +240,10 @@ export function createDemoProject(): Project {
   };
 }
 
+/** A new room starts empty apart from the default Twin XL bed that comes with it. */
 export function createBlankProject(name = "Untitled room"): Project {
   const project = createDemoProject();
-  return {
+  return setProvidedBed({
     ...project,
     id: `project-${crypto.randomUUID()}`,
     name,
@@ -250,5 +272,5 @@ export function createBlankProject(name = "Untitled room"): Project {
     cartVersion: 1,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-  };
+  }, "twin_xl");
 }

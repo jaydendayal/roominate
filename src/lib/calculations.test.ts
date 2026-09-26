@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isRoomBedItem } from "./beds";
 import { createDemoProject } from "./demo";
 import { calculateIssues, collidingItemIds, itemBounds, itemExceedsRoom, productFor, purchaseSubtotal, restsOnSurface, settledElevation, stackedElevation } from "./calculations";
 import { applyAcceptedProposal, generateProposal } from "./proposals";
@@ -10,8 +11,9 @@ describe("Roominate deterministic engines", () => {
   it("derives fixture issues from the project data", () => {
     const project = createDemoProject();
     const types = new Set(calculateIssues(project).map((issue) => issue.type));
-    expect(types.has("fit")).toBe(true);
-    expect(types.has("clearance")).toBe(true);
+    // The demo layout is conflict-free; its issues come from the cart, rules, and roommates.
+    expect(types.has("fit")).toBe(false);
+    expect(types.has("clearance")).toBe(false);
     expect(types.has("budget")).toBe(true);
     expect(types.has("duplicate")).toBe(true);
     expect(types.has("rule")).toBe(true);
@@ -19,7 +21,8 @@ describe("Roominate deterministic engines", () => {
 
   it("builds the demo only from real shortlist products", () => {
     const project = createDemoProject();
-    for (const demoItem of project.items) {
+    // The bed that comes with the room is the one non-retail item: it has no store listing or price.
+    for (const demoItem of project.items.filter((candidate) => !isRoomBedItem(candidate))) {
       const product = productFor(project, demoItem)!;
       expect(product.tags, product.name).toContain("shortlist");
       expect(product.sourceURL, product.name).toMatch(/^https:\/\/(www\.ikea\.com|www\.amazon\.com)\//);
@@ -73,13 +76,13 @@ describe("Roominate deterministic engines", () => {
     const dresser = item(project, "item-dresser");
     const fridge = item(project, "item-fridge");
     const dresserTop = heightOf(project, "item-dresser");
-    const openFloor = { x: 1.9, y: 1.4 };
+    const openFloor = { x: 2.8, y: 1.3 };
     const at = (elevation: number, position = dresser.transform!.position) => ({ ...fridge, transform: { position, rotationZ: 0, elevation } });
     expect(settledElevation(project, at(dresserTop), openFloor)).toBe(0);
     expect(settledElevation(project, at(1.4), openFloor)).toBe(0);
-    expect(settledElevation(project, at(1.4, { x: 1.9, y: 0.55 }), openFloor)).toBe(1.4);
-    expect(settledElevation(project, at(0, { x: 1.9, y: 0.55 }), dresser.transform!.position)).toBeCloseTo(dresserTop);
-    expect(settledElevation(project, at(dresserTop), { x: 3.2, y: 0.45 })).toBeCloseTo(dresserTop);
+    expect(settledElevation(project, at(1.4, { x: 1.2, y: 1.3 }), openFloor)).toBe(1.4);
+    expect(settledElevation(project, at(0, { x: 1.2, y: 1.3 }), dresser.transform!.position)).toBeCloseTo(dresserTop);
+    expect(settledElevation(project, at(dresserTop), { x: 1.6, y: 0.3 })).toBeCloseTo(dresserTop);
   });
 
   it("flags items sinking through the floor or lifted through the ceiling", () => {
@@ -104,13 +107,12 @@ describe("Roominate deterministic engines", () => {
   it("validates the complete demo proposal through the same issue engine", () => {
     const project = createDemoProject();
     const proposal = generateProposal(project);
-    // Swap the over-limit fridge for its permitted alternative, defer the duplicate lamp,
-    // swap the too-wide desk for its compact alternative, and move the pouf out of the door swing.
+    // Swap the over-limit fridge for its permitted alternative, defer the duplicate lamp, and swap
+    // the desk for its compact alternative to get under budget. The layout itself is conflict-free.
     expect(proposal.changes.map((change) => [change.type, change.itemId, change.replacementProductId ?? null])).toEqual([
       ["replace", "item-fridge", "shortlist-frigidaire-10l"],
       ["defer", "item-lamp-jay", null],
       ["replace", "item-desk", "shortlist-torald"],
-      ["reposition", "item-pouf", null],
     ]);
     proposal.changes = proposal.changes.map((change) => ({ ...change, accepted: true }));
     const next = applyAcceptedProposal({ ...project, proposal });

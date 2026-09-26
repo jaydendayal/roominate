@@ -1,6 +1,7 @@
+import { bedProduct, bedSizeOf, mattressSize } from "./beds";
 import { furnitureModelKind } from "./furniture";
 import { colorGroupsFor, isCustomColor, selectedChoice, shortlistKey } from "./productColors";
-import type { FurnitureVisualPart, FurnitureVisualProfile, Item, Product } from "./types";
+import type { BedSize, FurnitureVisualPart, FurnitureVisualProfile, Item, Product } from "./types";
 
 // Individual 3D models for each furnishing-shortlist product, built from primitives in the
 // FurnitureVisualPart format the room renderer already understands. Extents are fractions of
@@ -511,6 +512,65 @@ export const shortlistModelSpecs: Record<string, PartSpec[]> = {
   ],
 };
 
+const SHEET_WHITE = "#f6f4ef";
+/** Nominal pillow widths in meters (standard, queen, king) and how many each bed size gets. */
+const PILLOWS: Record<BedSize, { count: number; width: number }> = {
+  twin: { count: 1, width: 0.66 },
+  twin_xl: { count: 1, width: 0.66 },
+  full: { count: 2, width: 0.66 },
+  full_xl: { count: 2, width: 0.66 },
+  queen: { count: 2, width: 0.76 },
+  king: { count: 2, width: 0.91 },
+  california_king: { count: 2, width: 0.91 },
+};
+
+/**
+ * Model of the room's own bed in one size: a wood frame (headboard at the back, z = 0), mattress,
+ * duvet, and pillows. Parts are laid out in meters from the real bed size, so posts, rails, and
+ * pillows keep true proportions instead of stretching with the bed. Slots: "frame" and "bedding".
+ */
+export function bedModelSpecs(size: BedSize): PartSpec[] {
+  const dims = bedProduct(size).dimensions;
+  const W = dims.width!, L = dims.depth!, H = dims.height!;
+  const mattress = mattressSize(size);
+  const x = (a: number, b: number): Extent => [a / W, b / W];
+  const y = (a: number, b: number): Extent => [a / H, b / H];
+  const z = (a: number, b: number): Extent => [a / L, b / L];
+  const post = 0.05;
+  const side = (W - mattress.width) / 2;
+  const end = (L - mattress.length) / 2;
+  const [mattressBottom, mattressTop] = [0.39, 0.57];
+  const duvetStart = end + mattress.length * 0.3;
+  const { count, width: nominal } = PILLOWS[size];
+  const gap = 0.03;
+  const pillowWidth = Math.min(nominal, (mattress.width - (count + 1) * gap) / count);
+  const pillowSpan = count * pillowWidth + (count - 1) * gap;
+  const pillows = Array.from({ length: count }, (_, index) => {
+    const left = (W - pillowSpan) / 2 + index * (pillowWidth + gap);
+    return box("cushion", x(left, left + pillowWidth), y(mattressTop, mattressTop + 0.12), z(end + 0.03, end + 0.5), "bedding", "fabric");
+  });
+  return [
+    // Headboard: two full-height posts, a cap rail, and a panel.
+    box("leg", x(0, post), y(0, H), z(0, post), "frame", "wood"),
+    box("leg", x(W - post, W), y(0, H), z(0, post), "frame", "wood"),
+    box("back", x(0, W), y(H - 0.045, H), z(0, post), "frame", "wood"),
+    box("back", x(post, W - post), y(0.36, H - 0.045), z(0.012, post - 0.012), "frame", "wood"),
+    // Footboard: shorter posts and a panel.
+    box("leg", x(0, post), y(0, 0.62), z(L - post, L), "frame", "wood"),
+    box("leg", x(W - post, W), y(0, 0.62), z(L - post, L), "frame", "wood"),
+    box("back", x(post, W - post), y(0.24, 0.56), z(L - post + 0.012, L - 0.012), "frame", "wood"),
+    // Side rails and the slat deck the mattress rests on.
+    box("base", x(0, side), y(0.22, mattressBottom), z(post, L - post), "frame", "wood"),
+    box("base", x(W - side, W), y(0.22, mattressBottom), z(post, L - post), "frame", "wood"),
+    box("shelf", x(side, W - side), y(0.35, mattressBottom), z(post, L - post), "frame", "wood"),
+    // Mattress in a white fitted sheet, the duvet over the foot end, and its folded-back top sheet.
+    box("seat", x(side + 0.004, W - side - 0.004), y(mattressBottom, mattressTop), z(end + 0.004, L - end - 0.004), SHEET_WHITE, "fabric"),
+    box("other", x(side - 0.012, W - side + 0.012), y(mattressBottom + 0.08, mattressTop + 0.03), z(duvetStart, L - end + 0.012), "bedding", "fabric"),
+    box("other", x(side - 0.008, W - side + 0.008), y(mattressTop + 0.03, mattressTop + 0.05), z(duvetStart, duvetStart + 0.22), SHEET_WHITE, "fabric"),
+    ...pillows,
+  ];
+}
+
 function toPart(spec: PartSpec, colorHex: string | null): FurnitureVisualPart {
   const mid = (extent: Extent) => Number(((extent[0] + extent[1]) / 2 - 0.5).toFixed(4));
   const span = (extent: Extent) => Number((extent[1] - extent[0]).toFixed(4));
@@ -526,9 +586,13 @@ function toPart(spec: PartSpec, colorHex: string | null): FurnitureVisualPart {
   };
 }
 
-/** The item's 3D model: a shortlist product's own model in its chosen finish, or an imported product's profile recolored when a custom color is set. */
+/**
+ * The item's 3D model: a shortlist product's or the room bed's own model in its chosen finish, or an
+ * imported product's profile recolored when a custom color is set.
+ */
 export function visualProfileFor(product: Product, selection?: Item["colorSelection"]): FurnitureVisualProfile | undefined {
-  const specs = shortlistModelSpecs[shortlistKey(product.id)];
+  const bedSize = bedSizeOf(product.id);
+  const specs = bedSize ? bedModelSpecs(bedSize) : shortlistModelSpecs[shortlistKey(product.id)];
   if (specs) {
     const groups = colorGroupsFor(product);
     const choice = (groupId: string) => {

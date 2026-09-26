@@ -21,8 +21,11 @@ describe("shopping list export", () => {
   it("labels fit and price uncertainty from the same checks as the app", () => {
     const rows = shoppingListRows(createDemoProject(), ON_OBSERVATION);
     const byName = new Map(rows.map((row) => [row[0], row]));
-    expect(byName.get("LAGKAPTEN / ALEX")![11]).toBe("conflict");
+    expect(byName.get("LAGKAPTEN / ALEX")![11]).toBe("fits");
     expect(byName.get("BARLAST")![11]).toBe("unverified");
+    const pushedIntoWall = createDemoProject();
+    pushedIntoWall.items = pushedIntoWall.items.map((item) => item.id === "item-desk" ? { ...item, transform: { position: { x: 3.4, y: 2.73 }, rotationZ: 0 } } : item);
+    expect(new Map(shoppingListRows(pushedIntoWall, ON_OBSERVATION).map((row) => [row[0], row])).get("LAGKAPTEN / ALEX")![11]).toBe("conflict");
     // Shortlist prices are listed prices the group hasn't confirmed.
     expect(byName.get("FLINTAN")![7]).toBe("unconfirmed estimate");
     const confirmed = createDemoProject();
