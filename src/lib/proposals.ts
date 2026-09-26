@@ -184,7 +184,7 @@ export function generateProposal(project: Project): Proposal {
       continue;
     }
     if (!editable(item)) {
-      if (item.locked) blockers.push(`${name(item)} conflicts with ${rule.label} but is locked. Unlock it in Constraints to let Better Cart replace or remove it.`);
+      if (item.locked) blockers.push(`${name(item)} conflicts with ${rule.label} but is locked. Unlock it in the 3D Studio to let Better Cart replace or remove it.`);
       continue;
     }
     const swap = substitutes(project, proposed, item)[0];
@@ -237,7 +237,7 @@ export function generateProposal(project: Project): Proposal {
     const issue = worstFitIssue(lockedIssues, item.id);
     // An overlap with an unlocked item can still be solved by moving that item.
     const solvable = issue?.affectedItemIds.some((id) => id !== item.id && !proposed.items.find((other) => other.id === id)?.locked);
-    if (issue && !solvable) blockers.push(`${name(item)} is locked in place, but ${fitProblem(proposed, issue, item.id)}. Unlock it in Constraints or correct the room measurements.`);
+    if (issue && !solvable) blockers.push(`${name(item)} is locked in place, but ${fitProblem(proposed, issue, item.id)}. Unlock it in the 3D Studio or correct the room measurements.`);
   }
   const attempted = new Set<string>();
   for (;;) {
@@ -283,7 +283,7 @@ export function generateProposal(project: Project): Proposal {
     const item = proposed.items.find((candidate) => candidate.id === issue.affectedItemIds[0]);
     if (!item) continue;
     if (!editable(item)) {
-      if (item.locked) blockers.push(`${name(item)} blocks a keep-clear area but is locked. Unlock it in Constraints to let Better Cart move it.`);
+      if (item.locked) blockers.push(`${name(item)} blocks a keep-clear area but is locked. Unlock it in the 3D Studio to let Better Cart move it.`);
       continue;
     }
     const zone = proposed.room.clearanceZones.find((candidate) => candidate.id === issue.affectedGeometryIds[0]);

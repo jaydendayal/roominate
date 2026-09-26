@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, ChevronRight, Eye, Grid3X3, Maximize2, Move3D, PackagePlus, RotateCw, ScanLine, ShoppingCart } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, ChevronRight, Eye, Grid3X3, Lock, Maximize2, Move3D, PackagePlus, RotateCw, ScanLine, ShoppingCart, Unlock } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/calculations";
 import { snapItemPosition } from "@/lib/snap";
@@ -40,14 +40,18 @@ export function StudioPanel({
     }));
   };
 
+  // Per-item lock: freezes position and rotation (drag, lift, typed values, nudges, rotate, unplace) and Better Cart treats it as fixed.
+  const toggleLock = (item: Item) => changeItem(item.id, { locked: !item.locked });
+
   // Typed and nudged moves settle like drags: off the top of an item they drop to the floor, into one they land on top.
   const moveTo = (item: Item, position: Vec2) => {
+    if (item.locked) return;
     const transform = item.transform ?? { position, rotationZ: 0 };
     changeItem(item.id, { transform: { ...transform, position, elevation: settledElevation(project, { ...item, transform }, position) } });
   };
 
   const rotateSelected = () => {
-    if (!selected) return;
+    if (!selected || selected.locked) return;
     const rotationZ = (selected.transform?.rotationZ ?? 0) + Math.PI / 2;
     const center = selected.transform?.position ?? { x: project.room.width / 2, y: project.room.length / 2 };
     // Rotating swaps width and depth, so re-align edges when snapping is on.
@@ -71,7 +75,7 @@ export function StudioPanel({
   };
 
   const setSelectedElevation = (meters: number | null) => {
-    if (!selected || meters == null) return;
+    if (!selected || selected.locked || meters == null) return;
     const transform = selected.transform ?? { position: { x: project.room.width / 2, y: project.room.length / 2 }, rotationZ: 0 };
     changeItem(selected.id, { transform: { ...transform, elevation: meters } });
   };
@@ -88,12 +92,25 @@ export function StudioPanel({
             const product = productFor(project, item);
             const owner = project.people.find((person) => person.id === item.ownerId);
             const hasIssue = issues.some((issue) => issue.affectedItemIds.includes(item.id));
+            const name = product?.name ?? "Unknown item";
             return (
-              <button className={`room-item-row ${selectedId === item.id ? "selected" : ""}`} key={item.id} onClick={() => setSelectedId(item.id)}>
-                <span className="object-thumb" style={{ background: owner?.color }}><Box size={18} /></span>
-                <span className="item-row-copy"><strong>{product?.name ?? "Unknown item"}</strong><small>{owner?.name} · {item.transform ? "placed" : "fit unverified"}</small></span>
-                {hasIssue && <AlertTriangle size={16} className="warn-text" />}
-              </button>
+              <div className={`room-item-row ${selectedId === item.id ? "selected" : ""}`} key={item.id}>
+                <button className="room-item-select" onClick={() => setSelectedId(item.id)}>
+                  <span className="object-thumb" style={{ background: owner?.color }}><Box size={18} /></span>
+                  <span className="item-row-copy"><strong>{name}</strong><small>{owner?.name} · {item.transform ? "placed" : "fit unverified"}{item.locked ? " · locked" : ""}</small></span>
+                  {hasIssue && <AlertTriangle size={16} className="warn-text" />}
+                </button>
+                <button
+                  type="button"
+                  className={`icon-button lock-button ${item.locked ? "on" : ""}`}
+                  aria-pressed={Boolean(item.locked)}
+                  aria-label={item.locked ? `Unlock ${name}` : `Lock position and rotation of ${name}`}
+                  title={item.locked ? "Locked: position and rotation can't change. Click to unlock." : "Lock position and rotation"}
+                  onClick={() => toggleLock(item)}
+                >
+                  {item.locked ? <Lock size={15} /> : <Unlock size={15} />}
+                </button>
+              </div>
             );
           })}
         </div>
@@ -136,10 +153,20 @@ export function StudioPanel({
             <p className="eyebrow">Selected object</p>
             <h3>{selectedProduct.name}</h3>
             <p className="muted-copy">{units.formatDimensions(selectedProduct.dimensions)} · {selected.placementType}</p>
+            <button
+              type="button"
+              className={`lock-toggle ${selected.locked ? "on" : ""}`}
+              aria-pressed={Boolean(selected.locked)}
+              title={selected.locked ? "Locked: position and rotation can't change. Click to unlock." : "Keeps this item from being moved, lifted, or rotated"}
+              onClick={() => toggleLock(selected)}
+            >
+              {selected.locked ? <Lock size={15} /> : <Unlock size={15} />}
+              <span><strong>{selected.locked ? "Position & rotation locked" : "Lock position & rotation"}</strong><small>{selected.locked ? "Click to unlock this item" : "Stops moves, lifts, and rotation"}</small></span>
+            </button>
             <div className="coordinate-grid">
-              <label>X ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.x ?? 0} onChange={(meters) => moveSelectedAxis("x", meters)} /></label>
-              <label>Y ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.y ?? 0} onChange={(meters) => moveSelectedAxis("y", meters)} /></label>
-              <label>Z ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.elevation ?? 0} onChange={setSelectedElevation} /></label>
+              <label>X ({units.roomUnit})<LengthInput disabled={selected.locked} step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.x ?? 0} onChange={(meters) => moveSelectedAxis("x", meters)} /></label>
+              <label>Y ({units.roomUnit})<LengthInput disabled={selected.locked} step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.y ?? 0} onChange={(meters) => moveSelectedAxis("y", meters)} /></label>
+              <label>Z ({units.roomUnit})<LengthInput disabled={selected.locked} step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.elevation ?? 0} onChange={setSelectedElevation} /></label>
             </div>
             <div className="nudge-row" role="group" aria-label={`Move by ${stepLabel}`}>
               <span>Move {stepLabel}</span>
@@ -151,9 +178,9 @@ export function StudioPanel({
             </div>
             <div className="button-pair">
               <button className="secondary-button" disabled={selected.locked} onClick={rotateSelected}><RotateCw size={16} /> Rotate 90°</button>
-              <button className="secondary-button" onClick={() => changeItem(selected.id, { transform: null })}>Unplace</button>
+              <button className="secondary-button" disabled={selected.locked} onClick={() => changeItem(selected.id, { transform: null })}>Unplace</button>
             </div>
-            {selected.locked && <div className="info-note">This provided item is locked. Unlock it in Constraints before moving.</div>}
+            {selected.locked && <div className="info-note">Locked: dragging, lifting, typed positions, nudges, rotating, and unplacing are off for this item, and Better Cart won’t change it. Unlock it above to edit.</div>}
             {selectedIssues.length > 0 ? <div className="selected-issues">{selectedIssues.map((issue) => <button key={issue.id} onClick={onOpenIssues}><AlertTriangle size={16} /><span><strong>{issue.message}</strong><small>{issue.detail}</small></span><ChevronRight size={15} /></button>)}</div> : <div className="success-note"><span><Box size={16} /></span> No confirmed placement conflicts</div>}
           </div>
         ) : (
