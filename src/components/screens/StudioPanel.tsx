@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { AlertTriangle, Box, ChevronRight, Eye, Grid3X3, Maximize2, Move3D, PackagePlus, RotateCw, ScanLine, ShoppingCart } from "lucide-react";
-import { cents, productFor, purchaseSubtotal } from "@/lib/calculations";
-import type { Issue, Project } from "@/lib/types";
+import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/calculations";
+import type { Issue, Item, Project, Vec2 } from "@/lib/types";
 import { RoomCanvas } from "../RoomCanvas";
 
 export function StudioPanel({
@@ -34,6 +34,12 @@ export function StudioPanel({
       cartVersion: current.cartVersion + 1,
       proposal: current.proposal ? { ...current.proposal, stale: true } : null,
     }));
+  };
+
+  // Typed X/Z moves settle like drags: off the top of an item they drop to the floor, into one they land on top.
+  const moveTo = (item: Item, position: Vec2) => {
+    const transform = item.transform ?? { position, rotationY: 0 };
+    changeItem(item.id, { transform: { ...transform, position, elevation: settledElevation(project, { ...item, transform }, position) } });
   };
 
   return (
@@ -74,14 +80,14 @@ export function StudioPanel({
           issues={issues}
           selectedItemId={selectedId}
           onSelectItem={(id) => setSelectedId(id || null)}
-          onMoveItem={(itemId, position) => {
+          onMoveItem={(itemId, position, elevation) => {
             const item = project.items.find((candidate) => candidate.id === itemId);
-            if (item?.transform) changeItem(itemId, { transform: { ...item.transform, position } });
+            if (item?.transform) changeItem(itemId, { transform: { ...item.transform, position, elevation } });
           }}
           cutaway={cutaway}
           viewCommand={viewCommand}
         />
-        <div className="viewport-legend"><span><i className="legend-owned" /> Owned</span><span><i className="legend-planned" /> Planned</span><span><i className="legend-conflict" /> Conflict</span><span><Move3D size={14} /> Drag items to move</span></div>
+        <div className="viewport-legend"><span><i className="legend-owned" /> Owned</span><span><i className="legend-planned" /> Planned</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag items to move · blue arrow lifts</span></div>
       </section>
 
       <section className="studio-inspector panel-surface">
@@ -97,8 +103,9 @@ export function StudioPanel({
             <h3>{selectedProduct.name}</h3>
             <p className="muted-copy">{selectedProduct.dimensions.width?.toFixed(2)} × {selectedProduct.dimensions.depth?.toFixed(2)} × {selectedProduct.dimensions.height?.toFixed(2)} m · {selected.placementType}</p>
             <div className="coordinate-grid">
-              <label>X (m)<input type="number" step="0.05" value={selected.transform?.position.x ?? 0} onChange={(event) => changeItem(selected.id, { transform: { position: { x: Number(event.target.value), z: selected.transform?.position.z ?? 0 }, rotationY: selected.transform?.rotationY ?? 0 } })} /></label>
-              <label>Z (m)<input type="number" step="0.05" value={selected.transform?.position.z ?? 0} onChange={(event) => changeItem(selected.id, { transform: { position: { x: selected.transform?.position.x ?? 0, z: Number(event.target.value) }, rotationY: selected.transform?.rotationY ?? 0 } })} /></label>
+              <label>X (m)<input type="number" step="0.05" value={selected.transform?.position.x ?? 0} onChange={(event) => moveTo(selected, { x: Number(event.target.value), z: selected.transform?.position.z ?? 0 })} /></label>
+              <label>Y (m)<input type="number" step="0.05" value={selected.transform?.elevation ?? 0} onChange={(event) => changeItem(selected.id, { transform: { position: selected.transform?.position ?? { x: project.room.width / 2, z: project.room.length / 2 }, rotationY: selected.transform?.rotationY ?? 0, elevation: Number(event.target.value) } })} /></label>
+              <label>Z (m)<input type="number" step="0.05" value={selected.transform?.position.z ?? 0} onChange={(event) => moveTo(selected, { x: selected.transform?.position.x ?? 0, z: Number(event.target.value) })} /></label>
             </div>
             <div className="button-pair">
               <button className="secondary-button" disabled={selected.locked} onClick={() => changeItem(selected.id, { transform: selected.transform ? { ...selected.transform, rotationY: selected.transform.rotationY + Math.PI / 2 } : { position: { x: project.room.width / 2, z: project.room.length / 2 }, rotationY: Math.PI / 2 } })}><RotateCw size={16} /> Rotate 90°</button>
