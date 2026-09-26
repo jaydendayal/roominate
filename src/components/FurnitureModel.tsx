@@ -164,7 +164,7 @@ function Mirror({ w, h, d, color, opacity }: { w: number; h: number; d: number; 
     <BoxPart size={[w, h, Math.max(.025, d * .55)]} position={[0, 0, 0]} color={tone(color, -.18)} opacity={opacity} />
     <mesh position={[0, 0, face + .006]} castShadow>
       <planeGeometry args={[Math.max(.02, w - frame * 2), Math.max(.02, h - frame * 2)]} />
-      <meshPhysicalMaterial color="#b9cfce" metalness={.75} roughness={.16} transparent={opacity < 1} opacity={opacity} {...clip} />
+      <meshPhysicalMaterial color="#c9cde6" metalness={.75} roughness={.16} transparent={opacity < 1} opacity={opacity} {...clip} />
     </mesh>
     <BoxPart size={[w, frame, d * .25]} position={[0, h / 2 - frame / 2, face]} color={color} opacity={opacity} />
     <BoxPart size={[w, frame, d * .25]} position={[0, -h / 2 + frame / 2, face]} color={color} opacity={opacity} />

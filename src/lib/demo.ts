@@ -213,8 +213,8 @@ export function createDemoProject(): Project {
     roomType: "Shared dorm",
     ownerId: "person-jay",
     people: [
-      { id: "person-jay", name: "Jay", color: "#e36b3d" },
-      { id: "person-maya", name: "Maya", color: "#516b61" },
+      { id: "person-jay", name: "Jay", color: "#6e6363" },
+      { id: "person-maya", name: "Maya", color: "#5f6aa5" },
     ],
     room: {
       id: "room-demo",

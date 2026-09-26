@@ -46,16 +46,16 @@ export function ProductModelPreview({
       camera={{ position: [span * 1.55, span * 1.8, span * 1.25], fov: 38, near: 0.01, far: 100, up: [0, 0, 1] }}
       gl={{ antialias: true }}
     >
-      <color attach="background" args={["#e8ede9"]} />
+      <color attach="background" args={["#e4e2e9"]} />
       <ambientLight intensity={2.1} />
       <directionalLight position={[2, 3, 5]} intensity={2.7} />
       <mesh position={[0, 0, -0.018]} rotation={[Math.PI / 2, 0, 0]} receiveShadow>
         <cylinderGeometry args={[span * 0.78, span * 0.78, 0.035, 48]} />
-        <meshStandardMaterial color="#cad6cf" roughness={0.95} />
+        <meshStandardMaterial color="#cfccd6" roughness={0.95} />
       </mesh>
       <group position={[0, 0, size.height / 2]}>
         <group rotation={[Math.PI / 2, 0, 0]}>
-          <FurnitureModel category={category} name={name} dimensions={size} color="#b77255" profile={profile} />
+          <FurnitureModel category={category} name={name} dimensions={size} color="#847979" profile={profile} />
         </group>
       </group>
       <OrbitControls makeDefault target={[0, 0, size.height * 0.45]} enablePan={false} minDistance={span * 1.35} maxDistance={span * 4.5} />
