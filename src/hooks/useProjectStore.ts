@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createBlankProject, createDemoProject } from "@/lib/demo";
+import { initialProductPlacement } from "@/lib/discovery";
+import { mergeShortlistProducts } from "@/lib/shortlist";
 import type { Project } from "@/lib/types";
 
 const STORAGE_KEY = "roominate.projects.v1";
@@ -15,6 +17,7 @@ type LegacyTransform = { position: LegacyPosition; rotationZ?: number; rotationY
 
 function migrateProjectAxes(source: Project): Project {
   const project = structuredClone(source);
+  project.products = mergeShortlistProducts(project.products);
   const position = (value: LegacyPosition) => ({ x: value.x, y: value.y ?? value.z ?? 0 });
   project.room.features = project.room.features.map((feature) => ({ ...feature, position: position(feature.position as LegacyPosition) }));
   project.room.clearanceZones = project.room.clearanceZones.map((zone) => ({ ...zone, position: position(zone.position as LegacyPosition) }));
@@ -29,6 +32,11 @@ function migrateProjectAxes(source: Project): Project {
       },
     };
   });
+  project.items = project.items.map((item) => {
+    if (item.transform) return item;
+    const product = project.products.find((candidate) => candidate.id === item.productId);
+    return product?.tags.includes("shortlist") ? { ...item, transform: initialProductPlacement(project, product) } : item;
+  });
   if (project.proposal) {
     project.proposal.changes = project.proposal.changes.map((change) => {
       const legacy = change as typeof change & { rotationY?: number };
@@ -42,13 +50,24 @@ function migrateProjectAxes(source: Project): Project {
   return project;
 }
 
+// Made-up products from the original demo fixture, since replaced by real shortlist products.
+const LEGACY_DEMO_PRODUCT_IDS = new Set(["prod-desk-wide", "prod-desk-compact", "prod-chair", "prod-micro-jay", "prod-micro-maya", "prod-heater", "prod-shelf", "prod-dresser"]);
+
+/** Swaps a saved copy of the old demo for the current one, and drops unused made-up products from other projects. */
+function removeLegacyDemoProducts(project: Project): Project {
+  if (!project.products.some((product) => LEGACY_DEMO_PRODUCT_IDS.has(product.id))) return project;
+  if (project.id === "project-demo") return createDemoProject();
+  const used = new Set(project.items.map((item) => item.productId));
+  return { ...project, products: project.products.filter((product) => !LEGACY_DEMO_PRODUCT_IDS.has(product.id) || used.has(product.id)) };
+}
+
 function loadProjects(): Project[] {
   if (typeof window === "undefined") return [createDemoProject()];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [createDemoProject()];
     const parsed = JSON.parse(raw) as PersistedState;
-    return parsed.projects?.length ? parsed.projects.map(migrateProjectAxes) : [createDemoProject()];
+    return parsed.projects?.length ? parsed.projects.map((project) => migrateProjectAxes(removeLegacyDemoProducts(project))) : [createDemoProject()];
   } catch {
     return [createDemoProject()];
   }

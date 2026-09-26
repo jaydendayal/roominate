@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDemoProject } from "./demo";
-import { evaluateCandidateFit } from "./discovery";
+import { evaluateCandidateFit, initialProductPlacement } from "./discovery";
 
 describe("retailer candidate fit", () => {
   it("never confirms fit with missing dimensions", () => {
@@ -16,7 +16,8 @@ describe("retailer candidate fit", () => {
 
   it("rejects an item larger than the room", () => {
     const project = createDemoProject();
-    expect(evaluateCandidateFit(project, { ...project.products[0], id: "huge", dimensions: { width: 8, depth: 8, height: 3 } }).status).toBe("does_not_fit");
+    const product = { ...project.products[0], id: "huge", dimensions: { width: 8, depth: 8, height: 3 } };
+    expect(evaluateCandidateFit(project, product).status).toBe("does_not_fit");
+    expect(initialProductPlacement(project, product)).toEqual({ position: { x: project.room.width / 2, y: project.room.length / 2 }, rotationZ: 0 });
   });
 });
-

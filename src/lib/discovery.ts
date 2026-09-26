@@ -6,6 +6,14 @@ export type CandidateFit =
   | { status: "does_not_fit" }
   | { status: "unverified" };
 
+export function initialProductPlacement(project: Project, product: Product): NonNullable<Item["transform"]> {
+  const fit = evaluateCandidateFit(project, product);
+  if (fit.status === "fits") return { position: fit.position, rotationZ: fit.rotationZ };
+  // Keep a dimensioned product visible and editable even when no collision-free
+  // location exists. The normal issue engine will mark the centered preview red.
+  return { position: { x: project.room.width / 2, y: project.room.length / 2 }, rotationZ: 0 };
+}
+
 export function evaluateCandidateFit(project: Project, product: Product): CandidateFit {
   if (Object.values(product.dimensions).some((value) => value == null || value <= 0)) return { status: "unverified" };
   const item: Item = {

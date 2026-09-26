@@ -117,8 +117,12 @@ function substitutes(base: Project, proposed: Project, item: Item): Substitute[]
   if (!current || item.purchaseStatus !== "in_cart") return [];
   const options: Substitute[] = [];
   for (const product of proposed.products) {
-    if (product.id === current.id || !product.price || !dimensionsKnown(product) || violatesConfirmedRule(proposed, product)) continue;
-    const equivalent = (current.alternativeGroupId && product.alternativeGroupId === current.alternativeGroupId) || product.category === current.category;
+    const sameGroup = Boolean(current.alternativeGroupId && product.alternativeGroupId === current.alternativeGroupId);
+    // Built-in shortlist entries are browseable modeling references, not user-approved
+    // equivalents, unless placed in the same alternative group as the current item.
+    // Once added to the cart they still participate in every issue check.
+    if ((product.tags.includes("shortlist") && !sameGroup) || product.id === current.id || !product.price || !dimensionsKnown(product) || violatesConfirmedRule(proposed, product)) continue;
+    const equivalent = sameGroup || product.category === current.category;
     if (!equivalent) continue;
     const placement = item.transform ? findSafePlacement(base, proposed, item.id, product.id) : null;
     if (item.transform && !placement) continue;
@@ -145,7 +149,7 @@ function replaceChange(project: Project, item: Item, option: Substitute, reason:
   };
 }
 
-/** Short clause for why an item doesn't fit, e.g. "it overlaps Loop Task Chair". */
+/** Short clause for why an item doesn't fit, e.g. "it overlaps FLINTAN". */
 function fitProblem(project: Project, issue: Issue, itemId: string) {
   if (issue.id.startsWith("ceiling-")) return "it is taller than the ceiling";
   if (issue.id.startsWith("boundary-")) return "it extends past a wall";

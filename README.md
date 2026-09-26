@@ -11,7 +11,8 @@ The repository is a working vertical slice built from the supplied PRD:
 - local development persistence with a resettable full-flow demo
 - browser-based guided room capture with six viewpoints, quality feedback, and a measured scale reference
 - dimension-scaled procedural 3D models for chairs, couches, desks, wardrobes, hampers, beanbags, ottomans, dressers, lamps, mirrors, and mini fridges
-- schema-constrained OpenAI visual profiles that map product names to safe procedural archetypes and style variants
+- schema-constrained OpenAI visual profiles that turn product pictures or descriptions into bounded primitive parts, with safe procedural archetypes as a fallback
+- a built-in 59-item IKEA/Amazon furnishing shortlist with placement dimensions, reviewable pricing evidence, and direct retailer links
 - collision-tested Better Cart actions with individual accept/reject and undo
 - optional Amazon Creators API discovery with deterministic room-fit screening
 - retailer-grouped cart handoff without collecting payment details
@@ -93,16 +94,20 @@ Results are cached by operation, content hash, prompt/schema version, model, and
 
 ## Demo walkthrough
 
-The seeded demo deliberately derives these issues from fixture geometry and records:
+The seeded demo uses only real products from the furnishing shortlist and deliberately derives these issues from fixture geometry and records:
 
-- a wide desk crossing the room boundary and colliding with the chair
-- an owned roommate shelf blocking the confirmed entry-door swing
-- two roommates planning microwaves for the same shared need
-- an open-coil heater matching a confirmed user-entered housing rule
-- a $595 known subtotal against a $400 group budget
-- unplaced cart products whose fit remains unverified
+- a 55″ IKEA LAGKAPTEN / ALEX desk crossing the east wall and colliding with the FLINTAN chair
+- Maya's owned KJUGE pouf blocking the confirmed entry-door swing
+- two roommates planning floor lamps (LAUTERS and BARLAST) for the same room-lighting need
+- an Igloo 3.2 cu ft mini fridge matching a confirmed user-entered rule against fridges over 3.0 cu ft
+- a $589.95 known subtotal against a $400 group budget
+- Maya's BARLAST lamp starts unplaced in the fixture, so its fit is unverified (when a saved project loads, the app auto-places shortlist items, so in the browser the lamp usually appears already placed)
 
-Generate Better Cart to collision-test a compact desk placement, coordinate/defer the duplicate, remove the rule-conflicting heater, and reposition the shelf. With every proposal action accepted, deterministic tests verify a $327 subtotal and resolution of fit, clearance, budget, duplicate, and rule issues; the remaining unplaced microwave is correctly still reported as fit-unverified.
+The demo marks the TORALD desk and the Frigidaire 10 L mini fridge as alternatives to the desk and fridge in the cart. Better Cart only swaps to a shortlist product in the same alternative group, so other catalog items are never suggested automatically.
+
+Generate Better Cart to swap the fridge for its permitted alternative, defer the duplicate lamp, swap to the compact TORALD desk at a collision-tested placement, and move the pouf out of the door swing. With every proposal action accepted, deterministic tests verify a $194.94 subtotal and resolution of fit, clearance, budget, duplicate, and rule issues; in the fixture, Maya's unplaced lamp is correctly still reported as fit-unverified.
+
+Saved browser copies of the earlier demo (which used made-up products) are replaced with this demo on load; **Reset demo** also restores it.
 
 ## Verification
 

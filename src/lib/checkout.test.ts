@@ -4,20 +4,19 @@ import { createDemoProject } from "./demo";
 
 describe("retailer checkout", () => {
   it("classifies Amazon and IKEA from verified hostnames", () => {
-    const base = createDemoProject().products[0];
+    // Clear the explicit retailer so classification falls back to the product link and store name.
+    const base = { ...createDemoProject().products[0], retailer: undefined };
     expect(retailerForProduct({ ...base, sourceURL: "https://www.amazon.com/dp/example" })).toBe("amazon");
     expect(retailerForProduct({ ...base, sourceURL: "https://www.ikea.com/us/en/p/example" })).toBe("ikea");
     expect(retailerForProduct({ ...base, sourceURL: "https://amazon.example.test/item", store: "Independent" })).toBe("other");
   });
 
   it("groups selected items without combining retailer orders", () => {
-    const project = createDemoProject();
-    project.products[0] = { ...project.products[0], retailer: "amazon" };
-    project.products[2] = { ...project.products[2], retailer: "ikea" };
-    const groups = checkoutGroups(project);
-    expect(groups.some((group) => group.id === "amazon")).toBe(true);
-    expect(groups.some((group) => group.id === "ikea")).toBe(true);
-    expect(groups.reduce((total, group) => total + group.subtotal, 0)).toBe(59500);
+    // The demo cart mixes IKEA products with an Amazon mini fridge.
+    const groups = checkoutGroups(createDemoProject());
+    expect(groups.find((group) => group.id === "amazon")?.items.map(({ item }) => item.id)).toEqual(["item-fridge"]);
+    expect(groups.find((group) => group.id === "ikea")?.items).toHaveLength(4);
+    expect(groups.reduce((total, group) => total + group.subtotal, 0)).toBe(58995);
   });
 
   it("allows only HTTPS checkout destinations", () => {

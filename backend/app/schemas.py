@@ -110,6 +110,38 @@ class ProductDimensions(StrictModel):
         return value
 
 
+class ParametricVector(StrictModel):
+    x: float
+    y: float
+    z: float
+
+
+class FurnitureVisualPart(StrictModel):
+    primitive: Literal["box", "cylinder", "sphere", "cone"]
+    role: Literal["body", "top", "seat", "back", "arm", "leg", "base", "door", "drawer", "shelf", "cushion", "shade", "handle", "other"]
+    position: ParametricVector
+    size: ParametricVector
+    rotation: ParametricVector
+    material: Literal["wood", "fabric", "metal", "plastic", "glass", "mixed"]
+    color_hex: str | None = Field(pattern=r"^#[0-9a-fA-F]{6}$")
+
+    @model_validator(mode="after")
+    def bounded_part(self) -> "FurnitureVisualPart":
+        for axis in ("x", "y", "z"):
+            center = getattr(self.position, axis)
+            size = getattr(self.size, axis)
+            rotation = getattr(self.rotation, axis)
+            if not -0.5 <= center <= 0.5:
+                raise ValueError("part centers must stay inside the normalized collision box")
+            if not 0.02 <= size <= 1:
+                raise ValueError("part sizes must be normalized fractions between 0.02 and 1")
+            if abs(center) + size / 2 > 0.53:
+                raise ValueError("part geometry must stay inside the normalized collision box")
+            if not -180 <= rotation <= 180:
+                raise ValueError("part rotations must be degrees between -180 and 180")
+        return self
+
+
 class FurnitureVisualProfile(StrictModel):
     archetype: Literal["chair", "couch", "desk", "wardrobe", "hamper", "beanbag", "ottoman", "dresser", "lamp", "mirror", "mini_fridge", "box"]
     style: Literal["modern", "traditional", "industrial", "minimal", "soft", "utility"]
@@ -121,6 +153,7 @@ class FurnitureVisualProfile(StrictModel):
     color_hex: str | None = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     confidence: float = Field(ge=0, le=1)
     evidence: str = Field(min_length=1, max_length=180)
+    parts: list[FurnitureVisualPart] = Field(max_length=24)
 
 
 class ExtractedPrice(StrictModel):
