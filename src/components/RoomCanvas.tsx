@@ -6,7 +6,9 @@ import { OrbitControls, Text } from "@react-three/drei";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
+import { LengthInput } from "./LengthInput";
 import { calculateIssues, itemHasConflict, productFor } from "@/lib/calculations";
+import { snapItemPosition, stepPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
 import { gridOptions } from "@/lib/units";
 
@@ -63,21 +65,39 @@ function FloorGrid({ width, length, cell }: { width: number; length: number; cel
   );
 }
 
-function GridScaleLegend() {
-  const { unitSystem, setUnitSystem, gridSize, setGridSize } = useUnitPreferences();
+function GridScaleLegend({ showMovement }: { showMovement: boolean }) {
+  const { unitSystem, setUnitSystem, gridSize, setGridSize, snapToGrid, setSnapToGrid, stepMoves, setStepMoves, moveStep, setMoveStep, objectUnit } = useUnitPreferences();
   return (
-    <div className="grid-scale" role="group" aria-label="Grid scale and units">
-      <span className="grid-scale-swatch" aria-hidden="true" />
-      <label>
-        <span>1 square =</span>
-        <select aria-label="Grid square size" value={gridSize} onChange={(event) => setGridSize(Number(event.target.value))}>
-          {gridOptions[unitSystem].map((option) => <option key={option.label} value={option.meters}>{option.label}</option>)}
-        </select>
-      </label>
-      <div className="unit-toggle" role="group" aria-label="Distance units">
-        <button type="button" aria-pressed={unitSystem === "imperial"} aria-label="Imperial (feet and inches)" title="Imperial (feet and inches)" onClick={() => setUnitSystem("imperial")}>ft</button>
-        <button type="button" aria-pressed={unitSystem === "metric"} aria-label="Metric (meters and centimeters)" title="Metric (meters and centimeters)" onClick={() => setUnitSystem("metric")}>m</button>
+    <div className="grid-scale" role="group" aria-label="Grid scale, units, and movement">
+      <div className="grid-scale-row">
+        <span className="grid-scale-swatch" aria-hidden="true" />
+        <label>
+          <span>1 square =</span>
+          <select aria-label="Grid square size" value={gridSize} onChange={(event) => setGridSize(Number(event.target.value))}>
+            {gridOptions[unitSystem].map((option) => <option key={option.label} value={option.meters}>{option.label}</option>)}
+          </select>
+        </label>
+        <div className="unit-toggle" role="group" aria-label="Distance units">
+          <button type="button" aria-pressed={unitSystem === "imperial"} aria-label="Imperial (feet and inches)" title="Imperial (feet and inches)" onClick={() => setUnitSystem("imperial")}>ft</button>
+          <button type="button" aria-pressed={unitSystem === "metric"} aria-label="Metric (meters and centimeters)" title="Metric (meters and centimeters)" onClick={() => setUnitSystem("metric")}>m</button>
+        </div>
       </div>
+      {showMovement && (
+        <div className="grid-scale-row">
+          <label className="snap-toggle" title="When you let go of a dragged item (or rotate it), its edges line up with grid lines or walls">
+            <input type="checkbox" checked={snapToGrid} onChange={(event) => setSnapToGrid(event.target.checked)} />
+            <span>Snap to grid</span>
+          </label>
+          <div className="step-toggle" title="While dragging, items move one step of this distance at a time from where they started">
+            <label>
+              <input type="checkbox" checked={stepMoves} onChange={(event) => setStepMoves(event.target.checked)} />
+              <span>Move in steps of</span>
+            </label>
+            <LengthInput aria-label={`Movement step (${objectUnit})`} min={0} step={1} unit={objectUnit} meters={moveStep} onChange={(meters) => { if (meters != null) setMoveStep(meters); }} />
+            <span>{objectUnit}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -118,27 +138,30 @@ function FurnitureItem({
     event.stopPropagation();
     onSelect?.(item.id);
     if (!onDragEnd || item.locked) return;
-    activePointer.current = event.pointerId;
-    setDragging(true);
     const raycaster = new THREE.Raycaster();
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const point = new THREE.Vector3();
+    const floorPoint = (clientX: number, clientY: number) => {
+      const rect = gl.domElement.getBoundingClientRect();
+      raycaster.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), camera);
+      return raycaster.ray.intersectPlane(plane, point) ? { x: point.x, z: point.z } : null;
+    };
+    // Move by how far the pointer travels, keeping the spot where the item was grabbed under the pointer.
+    const grab = floorPoint(event.nativeEvent.clientX, event.nativeEvent.clientY);
+    if (!grab) return;
+    const start = { ...position };
+    activePointer.current = event.pointerId;
+    setDragging(true);
     let last: Vec2 | null = null;
     const move = (pointerEvent: PointerEvent) => {
       if (pointerEvent.pointerId !== activePointer.current) return;
-      const rect = gl.domElement.getBoundingClientRect();
-      const mouse = new THREE.Vector2(
-        ((pointerEvent.clientX - rect.left) / rect.width) * 2 - 1,
-        -((pointerEvent.clientY - rect.top) / rect.height) * 2 + 1,
-      );
-      raycaster.setFromCamera(mouse, camera);
-      if (raycaster.ray.intersectPlane(plane, point)) {
-        last = {
-          x: Math.max(-0.5, Math.min(project.room.width + 0.5, point.x)),
-          z: Math.max(-0.5, Math.min(project.room.length + 0.5, point.z)),
-        };
-        onDrag?.(item.id, last);
-      }
+      const current = floorPoint(pointerEvent.clientX, pointerEvent.clientY);
+      if (!current) return;
+      last = {
+        x: Math.max(-0.5, Math.min(project.room.width + 0.5, start.x + current.x - grab.x)),
+        z: Math.max(-0.5, Math.min(project.room.length + 0.5, start.z + current.z - grab.z)),
+      };
+      onDrag?.(item.id, last);
     };
     const finish = (pointerEvent: PointerEvent, commit: boolean) => {
       if (pointerEvent.pointerId !== activePointer.current) return;
@@ -182,7 +205,7 @@ function FurnitureItem({
   );
 }
 
-function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, gridSize }: RoomCanvasProps & { gridSize: number }) {
+function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, gridSize, snapToGrid, moveStep }: RoomCanvasProps & { gridSize: number; snapToGrid: boolean; moveStep: number | null }) {
   const controls = useRef<OrbitControlsImpl | null>(null);
   const [dragging, setDragging] = useState(false);
   // While dragging, render a local preview (with live conflict colors) and save only on release.
@@ -192,9 +215,17 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
     items: savedProject.items.map((item) => item.id === preview.itemId && item.transform ? { ...item, transform: { ...item.transform, position: preview.position } } : item),
   } : savedProject, [preview, savedProject]);
   const issues = useMemo(() => (preview ? calculateIssues(project) : savedIssues), [preview, project, savedIssues]);
+  // While dragging: whole steps only (if on). The saved position doesn't change mid-drag, so it is the step origin.
+  const stepped = (itemId: string, position: Vec2) => {
+    const start = savedProject.items.find((item) => item.id === itemId)?.transform?.position;
+    return moveStep && start ? stepPosition(start, position, moveStep) : position;
+  };
+  // On release: snap to the grid (if on) after stepping.
   const endDrag = (itemId: string, position: Vec2 | null) => {
     setPreview(null);
-    if (position) onMoveItem?.(itemId, position);
+    if (!position) return;
+    const moved = stepped(itemId, position);
+    onMoveItem?.(itemId, snapToGrid ? snapItemPosition(savedProject, itemId, moved, gridSize) : moved);
   };
   const wallColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex ?? "#e7dfd0";
   const floorColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("floor"))?.hex ?? "#a77f59";
@@ -246,7 +277,7 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
           issues={issues}
           selected={selectedItemId === item.id}
           onSelect={onSelectItem}
-          onDrag={onMoveItem ? (itemId, position) => setPreview({ itemId, position }) : undefined}
+          onDrag={onMoveItem ? (itemId, position) => setPreview({ itemId, position: stepped(itemId, position) }) : undefined}
           onDragEnd={onMoveItem ? endDrag : undefined}
           setDragging={setDragging}
         />
@@ -256,13 +287,13 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
 }
 
 export function RoomCanvas(props: RoomCanvasProps) {
-  const { gridSize } = useUnitPreferences();
+  const { gridSize, snapToGrid, stepMoves, moveStep } = useUnitPreferences();
   return (
     <div className="room-canvas">
       <Canvas shadows dpr={[1, 1.6]} camera={{ fov: 42, near: 0.05, far: 100 }} gl={{ antialias: true }}>
-        <Scene {...props} gridSize={gridSize} />
+        <Scene {...props} gridSize={gridSize} snapToGrid={snapToGrid} moveStep={stepMoves ? moveStep : null} />
       </Canvas>
-      <GridScaleLegend />
+      <GridScaleLegend showMovement={Boolean(props.onMoveItem)} />
     </div>
   );
 }

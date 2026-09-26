@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Box, ChevronRight, Eye, Grid3X3, Maximize2, Move3D, PackagePlus, RotateCw, ScanLine, ShoppingCart } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, ChevronRight, Eye, Grid3X3, Maximize2, Move3D, PackagePlus, RotateCw, ScanLine, ShoppingCart } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { cents, productFor, purchaseSubtotal } from "@/lib/calculations";
+import { snapItemPosition } from "@/lib/snap";
 import type { Issue, Project, Vec2 } from "@/lib/types";
 import { LengthInput } from "../LengthInput";
 import { RoomCanvas } from "../RoomCanvas";
@@ -37,6 +38,25 @@ export function StudioPanel({
       cartVersion: current.cartVersion + 1,
       proposal: current.proposal ? { ...current.proposal, stale: true } : null,
     }));
+  };
+
+  const rotateSelected = () => {
+    if (!selected) return;
+    const rotationY = (selected.transform?.rotationY ?? 0) + Math.PI / 2;
+    const center = selected.transform?.position ?? { x: project.room.width / 2, z: project.room.length / 2 };
+    // Rotating swaps width and depth, so re-align edges when snapping is on.
+    const position = units.snapToGrid ? snapItemPosition(project, selected.id, center, units.gridSize, rotationY) : center;
+    changeItem(selected.id, { transform: { position, rotationY } });
+  };
+
+  // Nudges move by exactly the user's step distance from the current position.
+  const stepLabel = units.formatLength(units.moveStep, "object");
+  const coordinateStep = units.roomUnit === "ft" ? 0.25 : 0.05;
+  const nudgeSelected = (axis: keyof Vec2, direction: -1 | 1) => {
+    if (!selected?.transform || selected.locked) return;
+    const { position } = selected.transform;
+    const moved = { ...position, [axis]: Number((position[axis] + direction * units.moveStep).toFixed(4)) };
+    changeItem(selected.id, { transform: { ...selected.transform, position: moved } });
   };
 
   const moveSelectedAxis = (axis: keyof Vec2, meters: number | null) => {
@@ -106,11 +126,19 @@ export function StudioPanel({
             <h3>{selectedProduct.name}</h3>
             <p className="muted-copy">{units.formatDimensions(selectedProduct.dimensions)} · {selected.placementType}</p>
             <div className="coordinate-grid">
-              <label>X ({units.roomUnit})<LengthInput step={units.roomUnit === "ft" ? 0.25 : 0.05} unit={units.roomUnit} meters={selected.transform?.position.x ?? 0} onChange={(meters) => moveSelectedAxis("x", meters)} /></label>
-              <label>Z ({units.roomUnit})<LengthInput step={units.roomUnit === "ft" ? 0.25 : 0.05} unit={units.roomUnit} meters={selected.transform?.position.z ?? 0} onChange={(meters) => moveSelectedAxis("z", meters)} /></label>
+              <label>X ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.x ?? 0} onChange={(meters) => moveSelectedAxis("x", meters)} /></label>
+              <label>Z ({units.roomUnit})<LengthInput step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.z ?? 0} onChange={(meters) => moveSelectedAxis("z", meters)} /></label>
+            </div>
+            <div className="nudge-row" role="group" aria-label={`Move by ${stepLabel}`}>
+              <span>Move {stepLabel}</span>
+              {([["x", -1, "−X", ArrowLeft], ["x", 1, "+X", ArrowRight], ["z", -1, "−Z", ArrowUp], ["z", 1, "+Z", ArrowDown]] as const).map(([axis, direction, label, Icon]) => (
+                <button key={label} type="button" className="secondary-button" disabled={selected.locked || !selected.transform} aria-label={`Move ${label} by ${stepLabel}`} title={`Move ${label} by ${stepLabel}`} onClick={() => nudgeSelected(axis, direction)}>
+                  <Icon size={14} aria-hidden="true" />{label}
+                </button>
+              ))}
             </div>
             <div className="button-pair">
-              <button className="secondary-button" disabled={selected.locked} onClick={() => changeItem(selected.id, { transform: selected.transform ? { ...selected.transform, rotationY: selected.transform.rotationY + Math.PI / 2 } : { position: { x: project.room.width / 2, z: project.room.length / 2 }, rotationY: Math.PI / 2 } })}><RotateCw size={16} /> Rotate 90°</button>
+              <button className="secondary-button" disabled={selected.locked} onClick={rotateSelected}><RotateCw size={16} /> Rotate 90°</button>
               <button className="secondary-button" onClick={() => changeItem(selected.id, { transform: null })}>Unplace</button>
             </div>
             {selected.locked && <div className="info-note">This provided item is locked. Unlock it in Constraints before moving.</div>}
