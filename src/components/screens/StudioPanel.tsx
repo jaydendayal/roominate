@@ -121,7 +121,7 @@ export function StudioPanel({
           cutaway={cutaway}
           viewCommand={viewCommand}
         />
-        <div className="viewport-legend"><span><i className="legend-owned" /> Owned</span><span><i className="legend-planned" /> Planned</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag items to move · blue arrow lifts</span></div>
+        <div className="viewport-legend"><span><i className="legend-owned" /> Owned</span><span><i className="legend-planned" /> Planned</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag items to move · arrow handle lifts</span></div>
       </section>
 
       <section className="studio-inspector panel-surface">

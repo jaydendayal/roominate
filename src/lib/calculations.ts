@@ -1,4 +1,4 @@
-import type { Dimensions, DuplicateResolution, Issue, Item, Product, Project, Vec2 } from "./types";
+import type { Dimensions, DuplicateResolution, Issue, Item, Product, Project, RoomFeature, Vec2 } from "./types";
 
 export interface Bounds {
   minX: number;
@@ -44,6 +44,18 @@ export function itemBounds(project: Project, item: Item): Bounds | null {
     minY: item.transform.position.y - footprint.depth / 2,
     maxY: item.transform.position.y + footprint.depth / 2,
   };
+}
+
+/** The wall a feature belongs to: its recorded wall, or else the nearest one. */
+export function featureWall(feature: RoomFeature, project: Project): NonNullable<RoomFeature["wall"]> {
+  if (feature.wall && feature.wall !== "unknown") return feature.wall;
+  const distances = [
+    ["west", feature.position.x],
+    ["east", project.room.width - feature.position.x],
+    ["south", feature.position.y],
+    ["north", project.room.length - feature.position.y],
+  ] as const;
+  return [...distances].sort((a, b) => a[1] - b[1])[0][0];
 }
 
 export function itemElevation(item: Item) {

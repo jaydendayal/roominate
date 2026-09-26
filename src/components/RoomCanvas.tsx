@@ -7,7 +7,7 @@ import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { LengthInput } from "./LengthInput";
-import { calculateIssues, collidingItemIds, itemElevation, itemExceedsRoom, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
+import { calculateIssues, collidingItemIds, featureWall, itemElevation, itemExceedsRoom, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
 import { snapItemPosition, stepPosition } from "@/lib/snap";
 import type { Issue, Item, Project, RoomFeature, Vec2 } from "@/lib/types";
 import { gridOptions } from "@/lib/units";
@@ -62,7 +62,7 @@ function FloorGrid({ width, length, cell }: { width: number; length: number; cel
   useEffect(() => () => geometry.dispose(), [geometry]);
   return (
     <lineSegments geometry={geometry} position={[0, 0, 0.004]}>
-      <lineBasicMaterial color="#6f5642" transparent opacity={0.45} />
+      <lineBasicMaterial color="#322e18" transparent opacity={0.32} />
     </lineSegments>
   );
 }
@@ -126,8 +126,8 @@ function roomClipPlanes(width: number, length: number, height: number): RoomClip
   return { inside, outside: inside.map((plane) => plane.clone().negate()) };
 }
 
-const OUT_OF_ROOM_RED = "#e3261c";
-const HANDLE_BLUE = "#2f7de1";
+const OUT_OF_ROOM_RED = "#b8321f";
+const HANDLE_COLOR = "#322e18";
 const FLOOR_SNAP = 0.04;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -156,7 +156,7 @@ function OutOfRoomGhost({ width, height, depth, planes }: { width: number; heigh
 function ElevationHandle({ offsetZ, active, onPointerDown }: { offsetZ: number; active: boolean; onPointerDown: (event: ThreeEvent<PointerEvent>) => void }) {
   const { gl } = useThree();
   const [hovered, setHovered] = useState(false);
-  const color = active || hovered ? "#79adff" : HANDLE_BLUE;
+  const color = active || hovered ? "#6f6bb8" : HANDLE_COLOR;
   // Transparent + no depth test draws the handle after the scene so walls and furniture never hide it.
   const material = <meshBasicMaterial color={color} transparent depthTest={false} depthWrite={false} />;
   useEffect(() => () => {
@@ -232,7 +232,7 @@ function FurnitureItem({
   const tintConflict = exceedsRoom
     ? issues.some((issue) => issue.severity === "error" && issue.affectedItemIds.includes(item.id) && !issue.affectedGeometryIds.includes(project.room.id))
     : conflict;
-  const color = selected ? "#f2b544" : tintConflict ? "#df654f" : item.acquisitionStatus === "owned" ? "#7d9688" : owner?.color ?? "#c99169";
+  const color = selected ? "#b7b5e4" : tintConflict ? "#c46a58" : item.acquisitionStatus === "owned" ? "#aaa6b3" : owner?.color ?? "#847979";
   const modelProps = { category: product.category, name: product.name, dimensions: { width: dimensions.width, depth: dimensions.depth, height: dimensions.height }, profile: product.visualProfile };
 
   // Follows one pointer until release (commit) or cancel, then reports back once.
@@ -335,39 +335,28 @@ function FurnitureItem({
         {(selected || conflict) && (
           <lineSegments>
             <edgesGeometry args={[new THREE.BoxGeometry(dimensions.width + 0.025, dimensions.height + 0.025, dimensions.depth + 0.025)]} />
-            <lineBasicMaterial color={selected ? "#fff3bf" : "#7e1e15"} />
+            <lineBasicMaterial color={selected ? "#322e18" : "#7d2e21"} />
           </lineSegments>
         )}
       </group>
       {(selected || conflict) && <Text
         position={[0, 0, dimensions.height / 2 + 0.12]}
         fontSize={0.09}
-        color="#fffdf8"
-        outlineColor="#21332d"
+        color="#f4f3f7"
+        outlineColor="#322e18"
         outlineWidth={0.008}
         anchorX="center"
         maxWidth={1.5}
       >{conflict ? `! ${product.name}` : product.name}</Text>}
       {selected && elevation > FLOOR_SNAP / 4 && (
         <group position={[0, 0, -itemHeight / 2 - elevation / 2]} rotation={[Math.PI / 2, 0, 0]}>
-          <mesh><cylinderGeometry args={[0.006, 0.006, elevation, 8]} /><meshBasicMaterial color={HANDLE_BLUE} transparent opacity={0.7} /></mesh>
-          <mesh position={[0, -elevation / 2 + 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[0.035, 0.05, 24]} /><meshBasicMaterial color={HANDLE_BLUE} side={THREE.DoubleSide} /></mesh>
+          <mesh><cylinderGeometry args={[0.006, 0.006, elevation, 8]} /><meshBasicMaterial color={HANDLE_COLOR} transparent opacity={0.7} /></mesh>
+          <mesh position={[0, -elevation / 2 + 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[0.035, 0.05, 24]} /><meshBasicMaterial color={HANDLE_COLOR} side={THREE.DoubleSide} /></mesh>
         </group>
       )}
       {selected && onLiftEnd && !item.locked && <ElevationHandle offsetZ={itemHeight / 2 + 0.42} active={liftingActive} onPointerDown={startLift} />}
     </group>
   );
-}
-
-function featureWall(feature: RoomFeature, project: Project): NonNullable<RoomFeature["wall"]> {
-  if (feature.wall && feature.wall !== "unknown") return feature.wall;
-  const distances = [
-    ["west", feature.position.x],
-    ["east", project.room.width - feature.position.x],
-    ["south", feature.position.y],
-    ["north", project.room.length - feature.position.y],
-  ] as const;
-  return [...distances].sort((a, b) => a[1] - b[1])[0][0];
 }
 
 function RoomFeatureModel({ feature, project }: { feature: RoomFeature; project: Project }) {
@@ -379,11 +368,11 @@ function RoomFeatureModel({ feature, project }: { feature: RoomFeature; project:
   const elevation = feature.elevation ?? (feature.kind === "window" ? 0.9 : 0);
   const opacity = feature.confirmed ? 0.92 : 0.58;
   const colors: Record<RoomFeature["kind"], string> = {
-    door: "#8d623f",
-    window: "#8fc4d3",
-    closet: "#9a8067",
-    radiator: "#d7d7cf",
-    obstacle: "#c78362",
+    door: "#847979",
+    window: "#bbc2e2",
+    closet: "#9b9199",
+    radiator: "#dcdae2",
+    obstacle: "#a58f86",
   };
   const color = colors[feature.kind];
 
@@ -396,14 +385,14 @@ function RoomFeatureModel({ feature, project }: { feature: RoomFeature; project:
     </mesh>
     <lineSegments>
       <edgesGeometry args={[new THREE.BoxGeometry(...size)]} />
-      <lineBasicMaterial color={feature.confirmed ? "#30483d" : "#d96a47"} transparent opacity={0.88} />
+      <lineBasicMaterial color={feature.confirmed ? "#322e18" : "#a3402f"} transparent opacity={0.88} />
     </lineSegments>
     {feature.kind === "door" && <mesh position={turns ? [0, feature.width * 0.34, 0] : [feature.width * 0.34, 0, 0]}>
       <sphereGeometry args={[0.045, 12, 8]} />
-      <meshStandardMaterial color="#d8ad55" metalness={0.6} roughness={0.28} />
+      <meshStandardMaterial color="#322e18" metalness={0.4} roughness={0.35} />
     </mesh>}
     <Billboard position={[0, 0, feature.height / 2 + 0.13]}>
-      <Text fontSize={0.1} color={feature.confirmed ? "#263c32" : "#a3422e"} outlineColor="#fffdf8" outlineWidth={0.009} anchorX="center">
+      <Text fontSize={0.1} color={feature.confirmed ? "#322e18" : "#a3402f"} outlineColor="#f4f3f7" outlineWidth={0.009} anchorX="center">
         {feature.confirmed ? feature.name : `? ${feature.name}`}
       </Text>
     </Billboard>
@@ -460,15 +449,15 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
     const position = savedItem(itemId)?.transform?.position;
     if (position && elevation != null) onMoveItem?.(itemId, position, elevation);
   };
-  const wallColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex ?? "#e7dfd0";
-  const floorColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("floor"))?.hex ?? "#a77f59";
+  const wallColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex ?? "#dedbe4";
+  const floorColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("floor"))?.hex ?? "#a89d9b";
   const center = useMemo(() => new THREE.Vector3(project.room.width / 2, project.room.length / 2, 0.55), [project.room.length, project.room.width]);
   const clipPlanes = useMemo(() => roomClipPlanes(project.room.width, project.room.length, project.room.height), [project.room.height, project.room.length, project.room.width]);
 
   return (
     <>
-      <color attach="background" args={["#d6ddd9"]} />
-      <fog attach="fog" args={["#d6ddd9", 8, 16]} />
+      <color attach="background" args={["#dcdae2"]} />
+      <fog attach="fog" args={["#dcdae2", 8, 16]} />
       <ambientLight intensity={1.8} />
       <directionalLight position={[2, 5, 7]} intensity={2.5} castShadow shadow-mapSize={[1024, 1024]} />
       <CameraRig project={project} command={viewCommand} controlsRef={controls} />
@@ -499,9 +488,9 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
         <group key={zone.id} position={[zone.position.x, zone.position.y, 0.012]}>
           <mesh>
             <planeGeometry args={[zone.width, zone.depth]} />
-            <meshBasicMaterial color="#e97055" transparent opacity={0.26} side={THREE.DoubleSide} />
+            <meshBasicMaterial color="#c46a58" transparent opacity={0.26} side={THREE.DoubleSide} />
           </mesh>
-          <Text position={[0, 0, 0.02]} fontSize={0.12} color="#762b20" anchorX="center">KEEP CLEAR</Text>
+          <Text position={[0, 0, 0.02]} fontSize={0.12} color="#7d2e21" anchorX="center">KEEP CLEAR</Text>
         </group>
       ))}
       {project.items.filter((item) => item.purchaseStatus !== "deferred").map((item) => (
