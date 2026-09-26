@@ -50,7 +50,7 @@ MAX_TOTAL_BYTES = 18_000_000
 ALLOWED_IMAGES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 ALLOWED_HEIC = {"image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"}
 ALLOWED_VIDEOS = {"video/mp4", "video/webm", "video/quicktime"}
-PROMPT_VERSION = "2026-09-26.5-room-feature-model"
+PROMPT_VERSION = "2026-09-26.6-parametric-product-parts"
 
 
 @asynccontextmanager
@@ -258,6 +258,7 @@ def _fallback_visual_profile(name: str | None, category: str | None = None, note
         has_arms=archetype in {"chair", "couch"}, has_back=archetype in {"chair", "couch"},
         leg_style="four_leg" if archetype in {"chair", "couch", "desk"} else "solid" if archetype in {"wardrobe", "dresser", "mini_fridge"} else "none",
         color_hex=None, confidence=0.72 if archetype != "box" else 0.2, evidence=note,
+        parts=[],
     )
 
 
@@ -404,11 +405,12 @@ async def extract_product_url(request: UrlImportRequest) -> dict[str, Any]:
             system_prompt=(
                 "Extract only product facts explicitly supported by the supplied store-page evidence. Convert labeled dimensions to meters and a displayed USD price to integer cents. "
                 "Use null for every missing or ambiguous field. Do not infer dimensions from a product image and do not claim a price is current beyond this observation. "
-                "Also classify the named product into exactly one supported visual archetype and conservative style profile for procedural rendering. Visual fields never change dimensions."
+                "Also classify the named product into exactly one supported visual archetype and conservative style profile for procedural rendering. "
+                "Only provide parametric parts when the page evidence clearly describes visible structure; otherwise return an empty parts list. Visual fields never change dimensions."
             ),
             user_text=f"Source URL: {raw_url}\n{evidence}",
             result_type=ProductAIResult,
-            max_output_tokens=750,
+            max_output_tokens=1200,
         )
         result.source_url = raw_url
         response = _product_response(result, result.processing_status, "Confirm extracted fields before adding the product.", usage)
@@ -457,12 +459,15 @@ async def extract_product_screenshot(
                 "Extract only text and product facts visibly supported by the image. Convert explicitly labeled dimensions to meters and a displayed USD price to integer cents. "
                 "Use null for cropped, illegible, or absent values. A screenshot price is an observation, not a live price. Evidence should name the visible region. "
                 "Classify the product's visible silhouette, material, arms, back, legs, and color into exactly one supported procedural visual profile. "
-                "Use color_hex only when a product color is explicit or clearly visible. Visual fields never change dimensions and must not imply photogrammetric reconstruction."
+                "Build a simplified parametric likeness from 4 to 20 clearly visible major parts. Use X for left/right width, Y for vertical height, and Z for front/back depth. "
+                "For each part, position is its normalized center from -0.5 to 0.5 and size is its fraction of the confirmed collision width, height, and depth. "
+                "Keep every part inside that normalized box, use degrees for rotation, preserve obvious symmetry, and omit tiny hardware or details hidden by the view. "
+                "Use color_hex only when a part color is explicit or clearly visible. Parts approximate appearance only: they never change dimensions or collision bounds and must not imply photogrammetric reconstruction."
             ),
             user_text="Extract a reviewable product draft and a procedural 3D appearance from this image.",
             result_type=ProductAIResult,
             images=[(data, content_type)],
-            max_output_tokens=750,
+            max_output_tokens=1800,
         )
         response = _product_response(result, result.processing_status, "Confirm each visible field; missing dimensions remain unknown.", usage)
         store.put_cached(cache_key, "product-screenshot", response)
@@ -492,12 +497,14 @@ async def generate_product_visual(request: ProductVisualRequest) -> dict[str, An
             operation="product-visual",
             system_prompt=(
                 "Choose a conservative procedural furniture visual profile from the allowed enum values using only the product name, category, and variant. "
-                "Do not generate code, geometry, dimensions, brands, or unsupported archetypes. Treat ambiguous names as box with low confidence. "
-                "Choose color_hex only when the text explicitly names a color; otherwise return null. Evidence must briefly cite the name words that support the selection."
+                "When those words describe structure clearly, assemble a simplified likeness from 4 to 20 safe parametric parts; otherwise return an empty parts list and use the archetype fallback. "
+                "Use X for left/right width, Y for vertical height, and Z for front/back depth. Part positions are normalized centers from -0.5 to 0.5; sizes are fractions of the collision width, height, and depth. "
+                "Keep every part inside the normalized box, express rotations in degrees, and preserve obvious symmetry. Do not output code, dimensions, brands, unsupported primitives, or tiny decorative hardware. "
+                "Choose color_hex only when text explicitly names a color; otherwise return null. Evidence must briefly cite the words supporting the structure."
             ),
             user_text=f"Product name: {request.name}\nCategory: {request.category or 'unknown'}\nVariant: {request.variant or 'unknown'}",
             result_type=FurnitureVisualAIResult,
-            max_output_tokens=450,
+            max_output_tokens=1500,
         )
         response = {"status": result.processing_status, "message": "Reviewable 3D style generated from the product name.", **result.model_dump(), "usage": usage}
         store.put_cached(cache_key, "product-visual", response)

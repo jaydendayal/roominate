@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { AlertCircle, Box, Check, Download, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Store, Trash2, Upload } from "lucide-react";
+import { AlertCircle, Box, Check, Download, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Sparkles, Store, Trash2, Upload } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { apiFetch, normalizeImageUpload } from "@/lib/api";
 import { cents, productFor } from "@/lib/calculations";
@@ -11,7 +11,7 @@ import { LengthInput } from "../LengthInput";
 import { ShoppingDiscovery } from "./ShoppingDiscovery";
 import { RetailerCheckout } from "./RetailerCheckout";
 import { ProductModelPreview } from "../ProductModelPreview";
-import { evaluateCandidateFit } from "@/lib/discovery";
+import { initialProductPlacement } from "@/lib/discovery";
 
 interface ProductDraft {
   name: string;
@@ -41,6 +41,15 @@ interface APIVisualProfile {
   color_hex: string | null;
   confidence: number;
   evidence: string;
+  parts?: Array<{
+    primitive: NonNullable<FurnitureVisualProfile["parts"]>[number]["primitive"];
+    role: NonNullable<FurnitureVisualProfile["parts"]>[number]["role"];
+    position: { x: number; y: number; z: number };
+    size: { x: number; y: number; z: number };
+    rotation: { x: number; y: number; z: number };
+    material: NonNullable<FurnitureVisualProfile["parts"]>[number]["material"];
+    color_hex: string | null;
+  }>;
 }
 
 interface ProductExtractionResponse {
@@ -65,7 +74,19 @@ interface VisualProfileResponse {
 }
 
 function visualProfile(profile: APIVisualProfile): FurnitureVisualProfile {
-  return { archetype: profile.archetype, style: profile.style, material: profile.material, silhouette: profile.silhouette, hasArms: profile.has_arms, hasBack: profile.has_back, legStyle: profile.leg_style, colorHex: profile.color_hex, confidence: profile.confidence, evidence: profile.evidence };
+  return {
+    archetype: profile.archetype,
+    style: profile.style,
+    material: profile.material,
+    silhouette: profile.silhouette,
+    hasArms: profile.has_arms,
+    hasBack: profile.has_back,
+    legStyle: profile.leg_style,
+    colorHex: profile.color_hex,
+    confidence: profile.confidence,
+    evidence: profile.evidence,
+    parts: profile.parts?.map(({ color_hex, ...part }) => ({ ...part, colorHex: color_hex })) ?? [],
+  };
 }
 
 const blankDraft = (source: "url" | "screenshot", sourceURL = ""): ProductDraft => ({ name: "", store: "", sourceURL, category: "", variant: "", width: null, depth: null, height: null, price: "", source });
@@ -188,20 +209,18 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       fieldEvidence: { name: confidence(Boolean(draft.name)), dimensions: confidence(Object.values(dimensions).every((value) => value != null)), price: confidence(Boolean(draft.price)) },
       tags: [],
     };
-    const fit = evaluateCandidateFit(project, product);
-    const transform = fit.status === "fits" ? { position: fit.position, rotationZ: fit.rotationZ } : null;
-    changeProject((current) => ({ ...current, products: [...current.products, product], items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.category === "uncategorized" ? [] : [product.category], transform, placementType: "floor" }] }));
+    changeProject((current) => ({ ...current, products: [...current.products, product], items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.category === "uncategorized" ? [] : [product.category], transform: initialProductPlacement(current, product), placementType: "floor" }] }));
     setDraft(null);
     setUrl("");
     setTab("cart");
   };
 
-  const addProduct = (product: Product) => changeProject((current) => ({ ...current, items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: product.id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.tags.slice(0, 1), transform: null, placementType: "floor" }] }));
+  const addProduct = (product: Product) => changeProject((current) => ({ ...current, items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: product.id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.tags.slice(0, 1), transform: initialProductPlacement(current, product), placementType: "floor" }] }));
 
   const addDiscoveredProduct = (product: Product, placement: { position: { x: number; y: number }; rotationZ: number } | null) => changeProject((current) => ({
     ...current,
     products: current.products.some((candidate) => candidate.id === product.id) ? current.products.map((candidate) => candidate.id === product.id ? product : candidate) : [...current.products, product],
-    items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: product.id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.tags.slice(0, 1), transform: placement, placementType: "floor" }],
+    items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: product.id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.tags.slice(0, 1), transform: placement ?? initialProductPlacement(current, product), placementType: "floor" }],
   }));
 
   const cartItems = project.items.filter((item) => item.purchaseStatus === "in_cart");
@@ -227,7 +246,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
             const existing = project.items.filter((item) => item.productId === product.id && item.purchaseStatus !== "deferred").length;
             return <article className="product-card" key={product.id}>
               <div className="product-art"><Box size={35} /><span>{product.category}</span></div>
-              <div className="product-card-copy"><small>{product.store}</small><h3>{product.name}</h3><p>{units.formatDimensions(product.dimensions)}</p><div><strong>{product.price ? cents(product.price.amount) : "Price unknown"}</strong><button className="secondary-button small" onClick={() => addProduct(product)}><PackagePlus size={14} /> Add {existing ? "another" : ""}</button></div></div>
+              <div className="product-card-copy"><small>{product.store}</small><h3>{product.name}</h3><p>{units.formatDimensions(product.dimensions)}</p>{(product.fieldEvidence.dimensions?.confidence ?? 1) < 0.8 && <span className="source-chip uncertain" title={product.fieldEvidence.dimensions?.note}>Verify dimensions</span>}<div><strong>{product.price ? cents(product.price.amount) : "Price unknown"}</strong><button className="secondary-button small" onClick={() => addProduct(product)}><PackagePlus size={14} /> Add {existing ? "another" : ""}</button></div></div>
             </article>;
           })}
           {!shownProducts.length && <div className="empty-state"><Box size={28} /><h3>No products yet</h3><p>Import a URL or screenshot, then confirm the extracted details.</p></div>}
@@ -258,7 +277,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
               <label>Category<input value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value, visualProfile: undefined })} placeholder="e.g. desk" /></label>
               <label className="span-2">Variant<input value={draft.variant} onChange={(event) => setDraft({ ...draft, variant: event.target.value, visualProfile: undefined })} placeholder="Size / color" /></label>
             </div>
-            <div className="visual-profile-box"><span><Box size={16} /><span><strong>{draft.visualProfile ? `${draft.visualProfile.style} ${draft.visualProfile.archetype.replaceAll("_", " ")}` : "Choose its 3D appearance"}</strong><small>{draft.visualProfile ? `${draft.visualProfile.material} · ${draft.visualProfile.silhouette} · ${Math.round(draft.visualProfile.confidence * 100)}% confidence` : "OpenAI selects from safe procedural model options using the name."}</small></span></span><button className="secondary-button small" disabled={!draft.name.trim() || visualLoading} onClick={() => void generateVisual()}>{visualLoading ? <LoaderCircle className="spin" size={14} /> : <Box size={14} />} {draft.visualProfile ? "Rebuild from details" : "Generate 3D model"}</button></div>
+            <div className="visual-profile-box"><span><Sparkles size={16} /><span><strong>{draft.visualProfile ? `${draft.visualProfile.style} ${draft.visualProfile.archetype.replaceAll("_", " ")}` : "Choose its 3D appearance"}</strong><small>{draft.visualProfile ? `${draft.visualProfile.parts?.length ? `${draft.visualProfile.parts.length} image-matched parts` : "template fallback"} · ${draft.visualProfile.material} · ${Math.round(draft.visualProfile.confidence * 100)}% confidence` : "OpenAI builds bounded parts from the image or product description."}</small></span></span><button className="secondary-button small" disabled={!draft.name.trim() || visualLoading} onClick={() => void generateVisual()}>{visualLoading ? <LoaderCircle className="spin" size={14} /> : <Sparkles size={14} />} {draft.visualProfile ? "Rebuild from details" : "Generate 3D model"}</button></div>
             <h3 className="form-subheading">Dimensions <small>{units.objectUnit === "in" ? "inches" : "centimeters"}</small></h3>
             <div className="form-grid three">{(["width", "depth", "height"] as const).map((key) => <label key={key}>{key[0].toUpperCase() + key.slice(1)}<LengthInput step={0.1} min={0} unit={units.objectUnit} meters={draft[key]} onChange={(meters) => setDraft((current) => current && { ...current, [key]: meters })} placeholder="Unknown" /></label>)}</div>
             <div className="form-grid"><label>Observed price (USD)<input type="number" step="0.01" min="0" value={draft.price} onChange={(event) => setDraft({ ...draft, price: event.target.value })} placeholder="Unknown" /></label><label>Source URL<input type="url" value={draft.sourceURL} onChange={(event) => setDraft({ ...draft, sourceURL: event.target.value })} placeholder="Optional" /></label></div>

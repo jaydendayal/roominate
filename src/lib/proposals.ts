@@ -117,7 +117,9 @@ function substitutes(base: Project, proposed: Project, item: Item): Substitute[]
   if (!current || item.purchaseStatus !== "in_cart") return [];
   const options: Substitute[] = [];
   for (const product of proposed.products) {
-    if (product.id === current.id || !product.price || !dimensionsKnown(product) || violatesConfirmedRule(proposed, product)) continue;
+    // Built-in shortlist entries are browseable modeling references, not user-approved
+    // equivalents. Once added to the cart they still participate in every issue check.
+    if (product.tags.includes("shortlist") || product.id === current.id || !product.price || !dimensionsKnown(product) || violatesConfirmedRule(proposed, product)) continue;
     const equivalent = (current.alternativeGroupId && product.alternativeGroupId === current.alternativeGroupId) || product.category === current.category;
     if (!equivalent) continue;
     const placement = item.transform ? findSafePlacement(base, proposed, item.id, product.id) : null;

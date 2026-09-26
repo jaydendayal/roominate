@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDemoProject } from "./demo";
-import { snapItemPosition, snapPosition, stepPosition } from "./snap";
+import { normalizeRotation, snapItemPosition, snapPosition, snapRotation, stepPosition } from "./snap";
 import { METERS_PER_FOOT } from "./units";
 
 const room = { width: 3.66, length: 3.05 };
@@ -50,5 +50,17 @@ describe("snap to grid", () => {
     const demo = createDemoProject();
     demo.products = demo.products.map((product) => product.id === "prod-chair" ? { ...product, dimensions: { width: null, depth: null, height: null } } : product);
     expect(snapItemPosition(demo, "item-chair", { x: 1.234, y: 2.345 }, 0.5)).toEqual({ x: 1.234, y: 2.345 });
+  });
+});
+
+describe("rotation snapping", () => {
+  it("snaps rotations to 15 degree increments", () => {
+    expect(snapRotation(22 * Math.PI / 180)).toBeCloseTo(15 * Math.PI / 180);
+    expect(snapRotation(24 * Math.PI / 180)).toBeCloseTo(30 * Math.PI / 180);
+  });
+
+  it("normalizes full turns to the equivalent compact angle", () => {
+    expect(normalizeRotation(Math.PI * 2 + Math.PI / 4)).toBeCloseTo(Math.PI / 4);
+    expect(snapRotation(-Math.PI * 2 - Math.PI / 2)).toBeCloseTo(-Math.PI / 2);
   });
 });

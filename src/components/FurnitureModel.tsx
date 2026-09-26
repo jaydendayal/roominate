@@ -3,7 +3,7 @@
 import { createContext, useContext } from "react";
 import * as THREE from "three";
 import { furnitureModelKind } from "@/lib/furniture";
-import type { FurnitureVisualProfile } from "@/lib/types";
+import type { FurnitureVisualPart, FurnitureVisualProfile } from "@/lib/types";
 
 type Size = [number, number, number];
 type Position = [number, number, number];
@@ -183,6 +183,56 @@ function MiniFridge({ w, h, d, color, opacity }: { w: number; h: number; d: numb
   </>;
 }
 
+const PART_FINISH: Record<FurnitureVisualPart["material"], { roughness: number; metalness: number }> = {
+  wood: { roughness: 0.72, metalness: 0.03 },
+  fabric: { roughness: 0.95, metalness: 0 },
+  metal: { roughness: 0.34, metalness: 0.72 },
+  plastic: { roughness: 0.5, metalness: 0.03 },
+  glass: { roughness: 0.14, metalness: 0.62 },
+  mixed: { roughness: 0.65, metalness: 0.12 },
+};
+
+const bounded = (value: number, min: number, max: number) => Math.max(min, Math.min(max, Number.isFinite(value) ? value : 0));
+const radians = (degrees: number) => bounded(degrees, -180, 180) * Math.PI / 180;
+const safeColor = (value: string | null | undefined, fallback: string) => value && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+
+function ParametricPart({ part, dimensions, color, opacity, usePartColor }: { part: FurnitureVisualPart; dimensions: { width: number; depth: number; height: number }; color: string; opacity: number; usePartColor: boolean }) {
+  const clip = useClip();
+  const size: Size = [
+    dimensions.width * bounded(part.size.x, 0.02, 1),
+    dimensions.height * bounded(part.size.y, 0.02, 1),
+    dimensions.depth * bounded(part.size.z, 0.02, 1),
+  ];
+  const position: Position = [
+    dimensions.width * bounded(part.position.x, -0.5, 0.5),
+    dimensions.height * bounded(part.position.y, -0.5, 0.5),
+    dimensions.depth * bounded(part.position.z, -0.5, 0.5),
+  ];
+  const rotation: Position = [radians(part.rotation.x), radians(part.rotation.y), radians(part.rotation.z)];
+  const finish = PART_FINISH[part.material] ?? PART_FINISH.mixed;
+  const glass = part.material === "glass";
+  const material = <meshStandardMaterial
+    color={usePartColor ? safeColor(part.colorHex, color) : color}
+    roughness={finish.roughness}
+    metalness={finish.metalness}
+    transparent={glass || opacity < 1}
+    opacity={glass ? opacity * 0.48 : opacity}
+    side={glass ? THREE.DoubleSide : THREE.FrontSide}
+    {...clip}
+  />;
+  return <mesh position={position} rotation={rotation} scale={size} castShadow receiveShadow>
+    {part.primitive === "sphere" ? <sphereGeometry args={[0.5, 24, 16]} />
+      : part.primitive === "cylinder" ? <cylinderGeometry args={[0.5, 0.5, 1, 24]} />
+        : part.primitive === "cone" ? <coneGeometry args={[0.5, 1, 24]} />
+          : <boxGeometry args={[1, 1, 1]} />}
+    {material}
+  </mesh>;
+}
+
+function ParametricFurniture({ parts, dimensions, color, opacity, usePartColors }: { parts: FurnitureVisualPart[]; dimensions: { width: number; depth: number; height: number }; color: string; opacity: number; usePartColors: boolean }) {
+  return <group>{parts.slice(0, 24).map((part, index) => <ParametricPart key={`${part.role}-${index}`} part={part} dimensions={dimensions} color={color} opacity={opacity} usePartColor={usePartColors} />)}</group>;
+}
+
 export function FurnitureModel({ category, name, dimensions, color, opacity = 1, profile, emphasized = false, clipping }: ModelProps) {
   const w = dimensions.width;
   const h = dimensions.height;
@@ -196,8 +246,10 @@ export function FurnitureModel({ category, name, dimensions, color, opacity = 1,
   const footprintScale = { slim: .84, standard: .94, rounded: .92, bulky: 1 }[profile?.silhouette ?? "standard"];
   const kind = profile && profile.confidence >= .5 ? profile.archetype : furnitureModelKind(category, name);
   const props = { w, h, d, color: styledColor, opacity };
+  const parametricParts = profile?.parts?.length && profile.parts.length >= 2 ? profile.parts : null;
   let model;
-  switch (kind) {
+  if (parametricParts) model = <ParametricFurniture parts={parametricParts} dimensions={dimensions} color={styledColor} opacity={opacity} usePartColors={!emphasized} />;
+  else switch (kind) {
     case "chair": model = <Chair {...props} hasArms={profile?.hasArms} hasBack={profile?.hasBack} />; break;
     case "couch": model = <Couch {...props} hasArms={profile?.hasArms} hasBack={profile?.hasBack} />; break;
     case "desk": model = <Desk {...props} />; break;
@@ -211,5 +263,5 @@ export function FurnitureModel({ category, name, dimensions, color, opacity = 1,
     case "mini_fridge": model = <MiniFridge {...props} />; break;
     default: model = <BoxPart size={[w, h, d]} position={[0, 0, 0]} color={styledColor} opacity={opacity} />;
   }
-  return <FinishContext.Provider value={finish}><ClipContext.Provider value={clipping}><group scale={[footprintScale, 1, footprintScale]}>{model}</group></ClipContext.Provider></FinishContext.Provider>;
+  return <FinishContext.Provider value={finish}><ClipContext.Provider value={clipping}><group scale={parametricParts ? [1, 1, 1] : [footprintScale, 1, footprintScale]}>{model}</group></ClipContext.Provider></FinishContext.Provider>;
 }

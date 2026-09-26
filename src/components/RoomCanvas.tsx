@@ -8,7 +8,7 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { LengthInput } from "./LengthInput";
 import { calculateIssues, collidingItemIds, featureWall, itemElevation, itemExceedsRoom, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
-import { snapItemPosition, stepPosition } from "@/lib/snap";
+import { normalizeRotation, snapItemPosition, snapRotation, stepPosition } from "@/lib/snap";
 import type { Issue, Item, Project, RoomFeature, Vec2 } from "@/lib/types";
 import { gridOptions } from "@/lib/units";
 import { FurnitureModel } from "./FurnitureModel";
@@ -18,7 +18,7 @@ interface RoomCanvasProps {
   issues: Issue[];
   selectedItemId?: string | null;
   onSelectItem?: (itemId: string) => void;
-  onMoveItem?: (itemId: string, position: Vec2, elevation: number) => void;
+  onMoveItem?: (itemId: string, position: Vec2, elevation: number, rotationZ: number) => void;
   cutaway?: boolean;
   viewCommand?: { type: "reset" | "overhead"; nonce: number };
   compact?: boolean;
@@ -86,9 +86,9 @@ function GridScaleLegend({ showMovement }: { showMovement: boolean }) {
       </div>
       {showMovement && (
         <div className="grid-scale-row">
-          <label className="snap-toggle" title="When you let go of a dragged item (or rotate it), its edges line up with grid lines or walls">
+          <label className="snap-toggle" title="Movement aligns to grid lines and rotation uses 15-degree increments">
             <input type="checkbox" checked={snapToGrid} onChange={(event) => setSnapToGrid(event.target.checked)} />
-            <span>Snap to grid</span>
+            <span>Snap grid + 15°</span>
           </label>
           <div className="step-toggle" title="While dragging, items move one step of this distance at a time from where they started">
             <label>
@@ -127,7 +127,8 @@ function roomClipPlanes(width: number, length: number, height: number): RoomClip
 }
 
 const OUT_OF_ROOM_RED = "#b8321f";
-const HANDLE_COLOR = "#322e18";
+const HANDLE_BLUE = "#2f7de1";
+const HANDLE_PURPLE = "#7652c8";
 const FLOOR_SNAP = 0.04;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -156,7 +157,7 @@ function OutOfRoomGhost({ width, height, depth, planes }: { width: number; heigh
 function ElevationHandle({ offsetZ, active, onPointerDown }: { offsetZ: number; active: boolean; onPointerDown: (event: ThreeEvent<PointerEvent>) => void }) {
   const { gl } = useThree();
   const [hovered, setHovered] = useState(false);
-  const color = active || hovered ? "#6f6bb8" : HANDLE_COLOR;
+  const color = active || hovered ? "#79adff" : HANDLE_BLUE;
   // Transparent + no depth test draws the handle after the scene so walls and furniture never hide it.
   const material = <meshBasicMaterial color={color} transparent depthTest={false} depthWrite={false} />;
   useEffect(() => () => {
@@ -186,6 +187,49 @@ function ElevationHandle({ offsetZ, active, onPointerDown }: { offsetZ: number; 
   );
 }
 
+function RotationHandle({ radius, offsetZ, rotationZ, active, onPointerDown }: { radius: number; offsetZ: number; rotationZ: number; active: boolean; onPointerDown: (event: ThreeEvent<PointerEvent>) => void }) {
+  const { gl } = useThree();
+  const [hovered, setHovered] = useState(false);
+  const color = active || hovered ? "#a98bea" : HANDLE_PURPLE;
+  const degrees = Math.round(normalizeRotation(rotationZ) * 180 / Math.PI);
+  useEffect(() => {
+    if (active) gl.domElement.style.cursor = "grabbing";
+    return () => {
+      gl.domElement.style.cursor = "";
+    };
+  }, [active, gl]);
+  return (
+    <group position={[0, 0, offsetZ]}>
+      <mesh
+        onPointerDown={onPointerDown}
+        onPointerOver={(event) => {
+          event.stopPropagation();
+          setHovered(true);
+          gl.domElement.style.cursor = "grab";
+        }}
+        onPointerOut={() => {
+          setHovered(false);
+          if (!active) gl.domElement.style.cursor = "";
+        }}
+      >
+        <ringGeometry args={[Math.max(0.04, radius - 0.1), radius + 0.1, 64]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh renderOrder={20}>
+        <ringGeometry args={[Math.max(0.04, radius - 0.012), radius + 0.012, 64]} />
+        <meshBasicMaterial color={color} transparent opacity={0.9} depthTest={false} depthWrite={false} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh position={[radius, 0, 0.015]} renderOrder={21}>
+        <sphereGeometry args={[0.055, 18, 12]} />
+        <meshBasicMaterial color={color} transparent depthTest={false} depthWrite={false} />
+      </mesh>
+      <Billboard position={[0, -radius - 0.11, 0.03]}>
+        <Text fontSize={0.08} color="#fffdf8" outlineColor="#38245f" outlineWidth={0.009} anchorX="center">{degrees}°</Text>
+      </Billboard>
+    </group>
+  );
+}
+
 function FurnitureItem({
   project,
   item,
@@ -197,6 +241,8 @@ function FurnitureItem({
   onDragEnd,
   onLift,
   onLiftEnd,
+  onRotate,
+  onRotateEnd,
   setDragging,
 }: {
   project: Project;
@@ -213,6 +259,10 @@ function FurnitureItem({
   onLift?: (id: string, elevation: number) => void;
   /** Called once on release with the final height, or null if the lift was cancelled or never moved. */
   onLiftEnd?: (id: string, elevation: number | null) => void;
+  /** Live preview while the rotation ring is dragged; not persisted. */
+  onRotate?: (id: string, rotationZ: number) => void;
+  /** Called once on release with the final rotation, or null if cancelled or never moved. */
+  onRotateEnd?: (id: string, rotationZ: number | null) => void;
   setDragging: (dragging: boolean) => void;
 }) {
   const { camera, gl } = useThree();
@@ -223,9 +273,12 @@ function FurnitureItem({
   const dimensions = product?.dimensions;
   const activePointer = useRef<number | null>(null);
   const [liftingActive, setLiftingActive] = useState(false);
+  const [rotatingActive, setRotatingActive] = useState(false);
   const owner = project.people.find((person) => person.id === item.ownerId);
   if (!product || !position || dimensions?.width == null || dimensions.depth == null || dimensions.height == null) return null;
   const itemHeight = dimensions.height;
+  const rotationZ = item.transform?.rotationZ ?? 0;
+  const rotationRadius = Math.hypot(dimensions.width, dimensions.depth) / 2 + 0.16;
 
   const exceedsRoom = itemExceedsRoom(project, item);
   // Wall/floor/ceiling violations are shown by the red out-of-room part, so they don't tint the whole item.
@@ -320,8 +373,41 @@ function FurnitureItem({
     });
   };
 
+  const startRotate = (event: ThreeEvent<PointerEvent>) => {
+    event.stopPropagation();
+    onSelect?.(item.id);
+    if (!onRotateEnd || item.locked) return;
+    const raycaster = new THREE.Raycaster();
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -event.point.z);
+    const point = new THREE.Vector3();
+    const planePoint = (clientX: number, clientY: number) => {
+      const rect = gl.domElement.getBoundingClientRect();
+      raycaster.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), camera);
+      return raycaster.ray.intersectPlane(plane, point) ? point : null;
+    };
+    const grab = planePoint(event.nativeEvent.clientX, event.nativeEvent.clientY);
+    if (!grab) return;
+    let previousAngle = Math.atan2(grab.y - position.y, grab.x - position.x);
+    let nextRotation = rotationZ;
+    let last: number | null = null;
+    setRotatingActive(true);
+    trackPointer(event.pointerId, (pointerEvent) => {
+      const current = planePoint(pointerEvent.clientX, pointerEvent.clientY);
+      if (!current) return;
+      const angle = Math.atan2(current.y - position.y, current.x - position.x);
+      const delta = Math.atan2(Math.sin(angle - previousAngle), Math.cos(angle - previousAngle));
+      previousAngle = angle;
+      nextRotation += delta;
+      last = nextRotation;
+      onRotate?.(item.id, nextRotation);
+    }, (commit) => {
+      setRotatingActive(false);
+      onRotateEnd(item.id, commit ? last : null);
+    });
+  };
+
   return (
-    <group position={[position.x, position.y, elevation + itemHeight / 2]} rotation={[0, 0, item.transform?.rotationZ ?? 0]}>
+    <group position={[position.x, position.y, elevation + itemHeight / 2]} rotation={[0, 0, rotationZ]}>
       <group rotation={[Math.PI / 2, 0, 0]}>
         <group onPointerDown={startDrag}>
           <FurnitureModel {...modelProps} color={color} opacity={tintConflict ? 0.82 : 1} emphasized={selected || tintConflict} clipping={exceedsRoom ? { planes: clipPlanes.inside } : undefined} />
@@ -354,11 +440,12 @@ function FurnitureItem({
       </Billboard>}
       {selected && elevation > FLOOR_SNAP / 4 && (
         <group position={[0, 0, -itemHeight / 2 - elevation / 2]} rotation={[Math.PI / 2, 0, 0]}>
-          <mesh><cylinderGeometry args={[0.006, 0.006, elevation, 8]} /><meshBasicMaterial color={HANDLE_COLOR} transparent opacity={0.7} /></mesh>
-          <mesh position={[0, -elevation / 2 + 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[0.035, 0.05, 24]} /><meshBasicMaterial color={HANDLE_COLOR} side={THREE.DoubleSide} /></mesh>
+          <mesh><cylinderGeometry args={[0.006, 0.006, elevation, 8]} /><meshBasicMaterial color={HANDLE_BLUE} transparent opacity={0.7} /></mesh>
+          <mesh position={[0, -elevation / 2 + 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[0.035, 0.05, 24]} /><meshBasicMaterial color={HANDLE_BLUE} side={THREE.DoubleSide} /></mesh>
         </group>
       )}
       {selected && onLiftEnd && !item.locked && <ElevationHandle offsetZ={itemHeight / 2 + 0.42} active={liftingActive} onPointerDown={startLift} />}
+      {selected && onRotateEnd && !item.locked && <RotationHandle radius={rotationRadius} offsetZ={itemHeight / 2 + 0.08} rotationZ={rotationZ} active={rotatingActive} onPointerDown={startRotate} />}
     </group>
   );
 }
@@ -407,6 +494,7 @@ interface DragPreview {
   itemId: string;
   position: Vec2;
   elevation: number;
+  rotationZ: number;
 }
 
 function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, gridSize, snapToGrid, moveStep }: RoomCanvasProps & { gridSize: number; snapToGrid: boolean; moveStep: number | null }) {
@@ -418,7 +506,7 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
   const placed = useRef<Item | null>(null);
   const project = useMemo(() => preview ? {
     ...savedProject,
-    items: savedProject.items.map((item) => item.id === preview.itemId && item.transform ? { ...item, transform: { ...item.transform, position: preview.position, elevation: preview.elevation } } : item),
+    items: savedProject.items.map((item) => item.id === preview.itemId && item.transform ? { ...item, transform: { ...item.transform, position: preview.position, elevation: preview.elevation, rotationZ: preview.rotationZ } } : item),
   } : savedProject, [preview, savedProject]);
   const issues = useMemo(() => (preview ? calculateIssues(project) : savedIssues), [preview, project, savedIssues]);
   const savedItem = (itemId: string) => savedProject.items.find((item) => item.id === itemId);
@@ -434,7 +522,7 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
     const from = placed.current?.id === itemId ? placed.current : saved;
     const elevation = roundMm(settledElevation(savedProject, from, position));
     placed.current = { ...saved, transform: { ...saved.transform, position, elevation } };
-    return { itemId, position, elevation };
+    return { itemId, position, elevation, rotationZ: from.transform?.rotationZ ?? saved.transform.rotationZ };
   };
   const drag = (itemId: string, position: Vec2) => setPreview(settle(itemId, stepped(itemId, position)));
   // On release: snap to the grid (if on) after stepping, then settle once more in case the snap moved it off or onto an edge.
@@ -442,16 +530,34 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
     setPreview(null);
     const final = position ? settle(itemId, snapToGrid ? snapItemPosition(savedProject, itemId, stepped(itemId, position), gridSize) : stepped(itemId, position)) : null;
     placed.current = null;
-    if (final) onMoveItem?.(itemId, final.position, final.elevation);
+    if (final) onMoveItem?.(itemId, final.position, final.elevation, final.rotationZ);
   };
   const lift = (itemId: string, elevation: number) => {
-    const position = savedItem(itemId)?.transform?.position;
-    if (position) setPreview({ itemId, position, elevation });
+    const transform = savedItem(itemId)?.transform;
+    if (transform) setPreview({ itemId, position: transform.position, elevation, rotationZ: transform.rotationZ });
   };
   const endLift = (itemId: string, elevation: number | null) => {
     setPreview(null);
-    const position = savedItem(itemId)?.transform?.position;
-    if (position && elevation != null) onMoveItem?.(itemId, position, elevation);
+    const transform = savedItem(itemId)?.transform;
+    if (transform && elevation != null) onMoveItem?.(itemId, transform.position, elevation, transform.rotationZ);
+  };
+  const rotate = (itemId: string, rotationZ: number) => {
+    const transform = savedItem(itemId)?.transform;
+    if (!transform) return;
+    setPreview({
+      itemId,
+      position: transform.position,
+      elevation: transform.elevation ?? 0,
+      rotationZ: snapToGrid ? snapRotation(rotationZ) : normalizeRotation(rotationZ),
+    });
+  };
+  const endRotate = (itemId: string, rotationZ: number | null) => {
+    setPreview(null);
+    const transform = savedItem(itemId)?.transform;
+    if (!transform || rotationZ == null) return;
+    const finalRotation = snapToGrid ? snapRotation(rotationZ) : normalizeRotation(rotationZ);
+    const position = snapToGrid ? snapItemPosition(savedProject, itemId, transform.position, gridSize, finalRotation) : transform.position;
+    onMoveItem?.(itemId, position, transform.elevation ?? 0, finalRotation);
   };
   const wallColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex ?? "#dedbe4";
   const floorColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("floor"))?.hex ?? "#a89d9b";
@@ -510,6 +616,8 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
           onDragEnd={onMoveItem ? endDrag : undefined}
           onLift={onMoveItem ? lift : undefined}
           onLiftEnd={onMoveItem ? endLift : undefined}
+          onRotate={onMoveItem ? rotate : undefined}
+          onRotateEnd={onMoveItem ? endRotate : undefined}
           setDragging={setDragging}
         />
       ))}

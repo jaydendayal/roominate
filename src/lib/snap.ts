@@ -2,6 +2,18 @@ import { productFor, rotatedFootprint } from "./calculations";
 import type { Project, Vec2 } from "./types";
 
 const WALL_PREFERENCE_M = 0.02;
+export const ROTATION_SNAP_RADIANS = Math.PI / 12;
+
+/** Keeps persisted rotations compact while preserving the same orientation. */
+export function normalizeRotation(rotation: number) {
+  return Math.atan2(Math.sin(rotation), Math.cos(rotation));
+}
+
+/** Snaps rotation to a regular angular increment (15 degrees by default). */
+export function snapRotation(rotation: number, increment = ROTATION_SNAP_RADIANS) {
+  if (!(increment > 0)) return normalizeRotation(rotation);
+  return normalizeRotation(Math.round(rotation / increment) * increment);
+}
 
 /**
  * Snaps one axis so the item's nearest edge lands on a grid line, or its far edge sits flush

@@ -1,4 +1,5 @@
 import type { Item, Product, Project } from "./types";
+import { shortlistProducts } from "./shortlist";
 
 const now = "2026-08-15T14:30:00.000Z";
 const price = (amount: number) => ({
@@ -13,7 +14,7 @@ const evidence = {
   confirmedByUser: true,
 };
 
-export const demoProducts: Product[] = [
+const coreDemoProducts: Product[] = [
   {
     id: "prod-desk-wide",
     name: "Northline Study Desk",
@@ -113,6 +114,8 @@ export const demoProducts: Product[] = [
     tags: ["storage", "provided"],
   },
 ];
+
+export const demoProducts: Product[] = [...coreDemoProducts, ...shortlistProducts];
 
 export const demoItems: Item[] = [
   {
@@ -322,7 +325,7 @@ export function createBlankProject(name = "Untitled room"): Project {
       palette: [],
       geometryVersion: 1,
     },
-    products: [],
+    products: structuredClone(shortlistProducts),
     items: [],
     budgetAmount: 50000,
     priorities: ["Stay under budget"],

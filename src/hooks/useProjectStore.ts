@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createBlankProject, createDemoProject } from "@/lib/demo";
+import { initialProductPlacement } from "@/lib/discovery";
+import { mergeShortlistProducts } from "@/lib/shortlist";
 import type { Project } from "@/lib/types";
 
 const STORAGE_KEY = "roominate.projects.v1";
@@ -15,6 +17,7 @@ type LegacyTransform = { position: LegacyPosition; rotationZ?: number; rotationY
 
 function migrateProjectAxes(source: Project): Project {
   const project = structuredClone(source);
+  project.products = mergeShortlistProducts(project.products);
   const position = (value: LegacyPosition) => ({ x: value.x, y: value.y ?? value.z ?? 0 });
   project.room.features = project.room.features.map((feature) => ({ ...feature, position: position(feature.position as LegacyPosition) }));
   project.room.clearanceZones = project.room.clearanceZones.map((zone) => ({ ...zone, position: position(zone.position as LegacyPosition) }));
@@ -28,6 +31,11 @@ function migrateProjectAxes(source: Project): Project {
         rotationZ: transform.rotationZ ?? transform.rotationY ?? 0,
       },
     };
+  });
+  project.items = project.items.map((item) => {
+    if (item.transform) return item;
+    const product = project.products.find((candidate) => candidate.id === item.productId);
+    return product?.tags.includes("shortlist") ? { ...item, transform: initialProductPlacement(project, product) } : item;
   });
   if (project.proposal) {
     project.proposal.changes = project.proposal.changes.map((change) => {
