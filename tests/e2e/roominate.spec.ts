@@ -63,6 +63,102 @@ test("URL import preserves a blocked source and accepts confirmed manual fields"
   await expect(page.getByText("$34.99")).toBeVisible();
 });
 
+test("product picture creates a preview model and places the confirmed item", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific picture-model flow");
+  await page.route("**/api/v1/extract-product/screenshot", async (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      status: "complete",
+      message: "Picture analyzed; confirm the model and measurements.",
+      product: {
+        name: "Photo Chair",
+        store: null,
+        source_url: null,
+        category: "chair",
+        variant: "rust fabric",
+        dimensions: { width_m: 0.62, depth_m: 0.66, height_m: 0.88 },
+        price: null,
+        visual_profile: {
+          archetype: "chair", style: "modern", material: "fabric", silhouette: "rounded",
+          has_arms: true, has_back: true, leg_style: "four_leg", color_hex: "#A65E45",
+          confidence: 0.91, evidence: "Visible upholstered chair with arms and four legs",
+        },
+      },
+    }),
+  }));
+
+  await page.getByRole("button", { name: "Open room" }).first().click();
+  await page.getByRole("button", { name: "Products" }).first().click();
+  await page.getByRole("button", { name: /Import product/ }).click();
+  await page.getByRole("button", { name: "Screenshot" }).click();
+  await page.getByLabel("Product picture").setInputFiles({
+    name: "chair.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
+  });
+
+  await expect(page.getByLabel("Interactive 3D preview of Photo Chair")).toBeVisible();
+  await expect(page.getByText("modern chair")).toBeVisible();
+  await page.getByRole("button", { name: "Confirm & add to cart" }).click();
+  await expect(page.getByText("Photo Chair")).toBeVisible();
+
+  await expect.poll(() => page.evaluate(() => {
+    const stored = JSON.parse(localStorage.getItem("roominate.projects.v1") ?? "{}");
+    const project = stored.projects?.find((candidate: { products: Array<{ name: string }> }) => candidate.products.some((product) => product.name === "Photo Chair"));
+    const product = project?.products.find((candidate: { name: string }) => candidate.name === "Photo Chair");
+    const item = project?.items.find((candidate: { productId: string }) => candidate.productId === product?.id);
+    return { archetype: product?.visualProfile?.archetype, placed: Boolean(item?.transform) };
+  })).toEqual({ archetype: "chair", placed: true });
+});
+
+test("room analysis turns detected structure into reviewable 3D features", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific room reconstruction flow");
+  await page.route("**/api/v1/analyze-room", async (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      status: "complete",
+      schema_version: "1.0",
+      message: "Review detected structure.",
+      palette: [{ hex: "#E5E0D8", label: "wall", confidence: 0.8, evidence: "Rear wall" }],
+      room: {
+        width_m: 3,
+        length_m: 3.4,
+        height_m: 2.4,
+        notes: [],
+        features: [{
+          kind: "window", label: "Detected rear window", wall: "north", offset_ratio: 0.68,
+          width_m: 1.1, depth_m: 0.08, height_m: 1, elevation_m: 0.9,
+          confidence: 0.86, evidence: "Frame 1 rear wall opening",
+        }],
+      },
+      corners: [],
+      surfaces: [],
+      dimension_estimates: [
+        { dimension: "width", meters: 3, confidence: 1, basis: "confirmed_reference", evidence: "Confirmed" },
+        { dimension: "length", meters: 3.4, confidence: 1, basis: "confirmed_reference", evidence: "Confirmed" },
+        { dimension: "height", meters: 2.4, confidence: 1, basis: "confirmed_reference", evidence: "Confirmed" },
+      ],
+      uncertainties: [],
+    }),
+  }));
+
+  await page.getByRole("button", { name: "Create a room" }).click();
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: "room.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
+  });
+  await page.getByRole("button", { name: "Analyze selected media" }).click();
+
+  await expect(page.getByText("Detected rear window")).toBeVisible();
+  await expect(page.getByText("1 structural feature modeled")).toBeVisible();
+  await page.getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByText(/north wall · confirmed/)).toBeVisible();
+  await expect(page.locator(".capture-canvas canvas")).toBeVisible();
+});
+
 test("phone layout keeps the 3D room and primary tabs usable without page overflow", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium", "Mobile-specific walkthrough");
   await page.getByRole("button", { name: "Open room" }).first().click();

@@ -31,7 +31,7 @@ function item(id: string, productId: string, at: [number, number] | null, extra:
     quantity: 1,
     essentiality: "optional",
     needsServed: [],
-    transform: at ? { position: { x: at[0], z: at[1] }, rotationY: 0 } : null,
+    transform: at ? { position: { x: at[0], y: at[1] }, rotationZ: 0 } : null,
     placementType: "floor",
     ...extra,
   };
@@ -90,7 +90,7 @@ describe("Better Cart on user-created projects", () => {
   });
 
   it("names the user's own keep-clear zone and clears it", () => {
-    const zone = { id: "zone-closet", name: "Closet door", position: { x: 2.5, z: 3 }, width: 1, depth: 0.8, source: "user_confirmed" as const, confirmed: true };
+    const zone = { id: "zone-closet", name: "Closet door", position: { x: 2.5, y: 3 }, width: 1, depth: 0.8, source: "user_confirmed" as const, confirmed: true };
     const plan = project([product("chair", "chair", [0.6, 0.6, 0.9], 5000)], [item("i-chair", "chair", [2.5, 3])], { room: { ...project([], []).room, clearanceZones: [zone] } });
     const proposal = generateProposal(plan);
     expect(proposal.changes[0].reason).toContain("closet door");

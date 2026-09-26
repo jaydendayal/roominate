@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDemoProject } from "./demo";
-import { calculateIssues, purchaseSubtotal } from "./calculations";
+import { calculateIssues, itemBounds, purchaseSubtotal } from "./calculations";
 import { applyAcceptedProposal, generateProposal } from "./proposals";
 
 describe("Roominate deterministic engines", () => {
@@ -21,6 +21,15 @@ describe("Roominate deterministic engines", () => {
   it("never calls an unplaced item a confirmed fit", () => {
     const issues = calculateIssues(createDemoProject());
     expect(issues.some((issue) => issue.id === "unplaced-item-micro-jay")).toBe(true);
+  });
+
+  it("uses X and Y for floor bounds and rotates footprints around Z", () => {
+    const project = createDemoProject();
+    const item = project.items.find((candidate) => candidate.id === "item-desk")!;
+    item.transform = { position: { x: 1, y: 2 }, rotationZ: Math.PI / 2 };
+    const bounds = itemBounds(project, item)!;
+    expect(bounds.minX).toBeCloseTo(1 - 0.76 / 2);
+    expect(bounds.maxY).toBeCloseTo(2 + 1.52 / 2);
   });
 
   it("applies individually accepted proposal changes", () => {

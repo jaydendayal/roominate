@@ -124,7 +124,7 @@ export const demoItems: Item[] = [
     quantity: 1,
     essentiality: "essential",
     needsServed: ["workspace"],
-    transform: { position: { x: 3.28, z: 2.38 }, rotationY: 0 },
+    transform: { position: { x: 3.28, y: 2.38 }, rotationZ: 0 },
     placementType: "floor",
   },
   {
@@ -136,7 +136,7 @@ export const demoItems: Item[] = [
     quantity: 1,
     essentiality: "essential",
     needsServed: ["workspace", "seating"],
-    transform: { position: { x: 2.48, z: 2.34 }, rotationY: 0 },
+    transform: { position: { x: 2.48, y: 2.34 }, rotationZ: 0 },
     placementType: "floor",
   },
   {
@@ -172,7 +172,7 @@ export const demoItems: Item[] = [
     quantity: 1,
     essentiality: "optional",
     needsServed: ["warmth"],
-    transform: { position: { x: 1.9, z: 0.55 }, rotationY: 0 },
+    transform: { position: { x: 1.9, y: 0.55 }, rotationZ: 0 },
     placementType: "floor",
   },
   {
@@ -184,7 +184,7 @@ export const demoItems: Item[] = [
     quantity: 1,
     essentiality: "essential",
     needsServed: ["storage"],
-    transform: { position: { x: 0.58, z: 0.62 }, rotationY: 0 },
+    transform: { position: { x: 0.58, y: 0.62 }, rotationZ: 0 },
     placementType: "floor",
   },
   {
@@ -196,7 +196,7 @@ export const demoItems: Item[] = [
     quantity: 1,
     essentiality: "essential",
     needsServed: ["storage"],
-    transform: { position: { x: 3.08, z: 0.42 }, rotationY: 0 },
+    transform: { position: { x: 3.08, y: 0.42 }, rotationZ: 0 },
     placementType: "floor",
     locked: true,
   },
@@ -238,7 +238,7 @@ export function createDemoProject(): Project {
           id: "door-entry",
           name: "Entry door",
           kind: "door",
-          position: { x: 0.46, z: 0.04 },
+          position: { x: 0.46, y: 0.04 },
           width: 0.91,
           depth: 0.08,
           height: 2.03,
@@ -248,7 +248,7 @@ export function createDemoProject(): Project {
           id: "window-north",
           name: "North window",
           kind: "window",
-          position: { x: 2.75, z: 3.01 },
+          position: { x: 2.75, y: 3.01 },
           width: 1.2,
           depth: 0.08,
           height: 1.1,
@@ -259,7 +259,7 @@ export function createDemoProject(): Project {
         {
           id: "clear-door-entry",
           name: "Entry door swing",
-          position: { x: 0.48, z: 0.48 },
+          position: { x: 0.48, y: 0.48 },
           width: 0.96,
           depth: 0.96,
           source: "user_confirmed",
@@ -335,4 +335,3 @@ export function createBlankProject(name = "Untitled room"): Project {
     updatedAt: new Date().toISOString(),
   };
 }
-

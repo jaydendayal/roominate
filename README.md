@@ -17,6 +17,8 @@ The repository is a working vertical slice built from the supplied PRD:
 - retailer-grouped cart handoff without collecting payment details
 - expiring remote roommate invites with view/edit permissions, private-media stripping, collaborator identity matching, and revision-safe explicit publishing
 
+Room geometry uses a single right-handed convention throughout the domain model, fit engine, and renderer: **X** is room width, **Y** is room length, and **Z** is vertical height. Furniture positions therefore live on the `(x, y)` floor plane and rotate around Z. Previously saved browser projects using the older `(x, z)` floor format are migrated when loaded.
+
 ## Run locally
 
 Prerequisites: Node.js 20+, Python 3.12+, and optionally `ffmpeg` for server-side walkthrough-video frame sampling. The commands below are the same on macOS, Linux, and Windows (PowerShell or Command Prompt).

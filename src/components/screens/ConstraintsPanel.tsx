@@ -42,7 +42,7 @@ export function ConstraintsPanel({ project, update }: { project: Project; update
     mutate((current) => ({
       ...current,
       products: [...current.products, product],
-      items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId, ownerId: String(form.get("owner")), acquisitionStatus: String(form.get("status")) as "owned" | "planned" | "tentative", purchaseStatus: form.get("status") === "owned" ? "not_purchasing" : "in_cart", quantity: 1, essentiality: "optional", needsServed: [product.category], transform: { position: { x: current.room.width / 2, z: current.room.length / 2 }, rotationY: 0 }, placementType: "floor" }],
+      items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId, ownerId: String(form.get("owner")), acquisitionStatus: String(form.get("status")) as "owned" | "planned" | "tentative", purchaseStatus: form.get("status") === "owned" ? "not_purchasing" : "in_cart", quantity: 1, essentiality: "optional", needsServed: [product.category], transform: { position: { x: current.room.width / 2, y: current.room.length / 2 }, rotationZ: 0 }, placementType: "floor" }],
     }));
     setInventoryOpen(false);
   };
@@ -122,4 +122,3 @@ export function ConstraintsPanel({ project, update }: { project: Project; update
     </div>
   );
 }
-

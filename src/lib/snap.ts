@@ -25,7 +25,7 @@ export function snapPosition(position: Vec2, footprint: { width: number; depth: 
   if (!(cell > 0)) return position;
   return {
     x: snapAxis(position.x, footprint.width, cell, room.width),
-    z: snapAxis(position.z, footprint.depth, cell, room.length),
+    y: snapAxis(position.y, footprint.depth, cell, room.length),
   };
 }
 
@@ -33,13 +33,13 @@ export function snapPosition(position: Vec2, footprint: { width: number; depth: 
 export function stepPosition(start: Vec2, target: Vec2, step: number): Vec2 {
   if (!(step > 0)) return target;
   const axis = (from: number, to: number) => Number((from + Math.round((to - from) / step) * step).toFixed(4));
-  return { x: axis(start.x, target.x), z: axis(start.z, target.z) };
+  return { x: axis(start.x, target.x), y: axis(start.y, target.y) };
 }
 
-/** Snaps `position` for an item using its product's footprint at `rotationY` (defaults to its current rotation). */
-export function snapItemPosition(project: Project, itemId: string, position: Vec2, cell: number, rotationY?: number): Vec2 {
+/** Snaps `position` for an item using its product's footprint at `rotationZ` (defaults to its current rotation). */
+export function snapItemPosition(project: Project, itemId: string, position: Vec2, cell: number, rotationZ?: number): Vec2 {
   const item = project.items.find((candidate) => candidate.id === itemId);
   const product = item ? productFor(project, item) : undefined;
-  const footprint = product ? rotatedFootprint(product.dimensions, rotationY ?? item?.transform?.rotationY ?? 0) : null;
+  const footprint = product ? rotatedFootprint(product.dimensions, rotationZ ?? item?.transform?.rotationZ ?? 0) : null;
   return footprint ? snapPosition(position, footprint, cell, project.room) : position;
 }

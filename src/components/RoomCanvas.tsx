@@ -2,14 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
-import { OrbitControls, Text } from "@react-three/drei";
+import { Billboard, OrbitControls, Text } from "@react-three/drei";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { LengthInput } from "./LengthInput";
 import { calculateIssues, itemHasConflict, productFor } from "@/lib/calculations";
 import { snapItemPosition, stepPosition } from "@/lib/snap";
-import type { Issue, Item, Project, Vec2 } from "@/lib/types";
+import type { Issue, Item, Project, RoomFeature, Vec2 } from "@/lib/types";
 import { gridOptions } from "@/lib/units";
 import { FurnitureModel } from "./FurnitureModel";
 
@@ -27,11 +27,12 @@ interface RoomCanvasProps {
 function CameraRig({ project, command, controlsRef }: { project: Project; command?: RoomCanvasProps["viewCommand"]; controlsRef: React.RefObject<OrbitControlsImpl | null> }) {
   const { camera } = useThree();
   useEffect(() => {
-    const center = new THREE.Vector3(project.room.width / 2, 0.6, project.room.length / 2);
+    camera.up.set(0, 0, 1);
+    const center = new THREE.Vector3(project.room.width / 2, project.room.length / 2, 0.6);
     if (command?.type === "overhead") {
-      camera.position.set(project.room.width / 2, Math.max(5.5, project.room.length * 1.8), project.room.length / 2 + 0.001);
+      camera.position.set(project.room.width / 2, project.room.length / 2 + 0.001, Math.max(5.5, project.room.length * 1.8));
     } else {
-      camera.position.set(project.room.width * 1.45, Math.max(3.4, project.room.height * 1.4), project.room.length * 1.55);
+      camera.position.set(project.room.width * 1.45, project.room.length * 1.55, Math.max(3.4, project.room.height * 1.4));
     }
     camera.lookAt(center);
     if (controlsRef.current) {
@@ -51,8 +52,8 @@ function FloorGrid({ width, length, cell }: { width: number; length: number; cel
     const columns = Math.floor(width / cell + 1e-6);
     const rows = Math.floor(length / cell + 1e-6);
     if (columns <= MAX_GRID_LINES_PER_AXIS && rows <= MAX_GRID_LINES_PER_AXIS) {
-      for (let i = 1; i <= columns; i += 1) points.push(i * cell, 0, 0, i * cell, 0, length);
-      for (let j = 1; j <= rows; j += 1) points.push(0, 0, j * cell, width, 0, j * cell);
+      for (let i = 1; i <= columns; i += 1) points.push(i * cell, 0, 0, i * cell, length, 0);
+      for (let j = 1; j <= rows; j += 1) points.push(0, j * cell, 0, width, j * cell, 0);
     }
     const buffer = new THREE.BufferGeometry();
     buffer.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
@@ -60,7 +61,7 @@ function FloorGrid({ width, length, cell }: { width: number; length: number; cel
   }, [cell, length, width]);
   useEffect(() => () => geometry.dispose(), [geometry]);
   return (
-    <lineSegments geometry={geometry} position={[0, 0.004, 0]}>
+    <lineSegments geometry={geometry} position={[0, 0, 0.004]}>
       <lineBasicMaterial color="#6f5642" transparent opacity={0.45} />
     </lineSegments>
   );
@@ -140,12 +141,12 @@ function FurnitureItem({
     onSelect?.(item.id);
     if (!onDragEnd || item.locked) return;
     const raycaster = new THREE.Raycaster();
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
     const point = new THREE.Vector3();
     const floorPoint = (clientX: number, clientY: number) => {
       const rect = gl.domElement.getBoundingClientRect();
       raycaster.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), camera);
-      return raycaster.ray.intersectPlane(plane, point) ? { x: point.x, z: point.z } : null;
+      return raycaster.ray.intersectPlane(plane, point) ? { x: point.x, y: point.y } : null;
     };
     // Move by how far the pointer travels, keeping the spot where the item was grabbed under the pointer.
     const grab = floorPoint(event.nativeEvent.clientX, event.nativeEvent.clientY);
@@ -160,7 +161,7 @@ function FurnitureItem({
       if (!current) return;
       last = {
         x: Math.max(-0.5, Math.min(project.room.width + 0.5, start.x + current.x - grab.x)),
-        z: Math.max(-0.5, Math.min(project.room.length + 0.5, start.z + current.z - grab.z)),
+        y: Math.max(-0.5, Math.min(project.room.length + 0.5, start.y + current.y - grab.y)),
       };
       onDrag?.(item.id, last);
     };
@@ -182,18 +183,20 @@ function FurnitureItem({
   };
 
   return (
-    <group position={[position.x, dimensions.height / 2, position.z]} rotation={[0, item.transform?.rotationY ?? 0, 0]}>
-      <group onPointerDown={startDrag}>
-        <FurnitureModel category={product.category} name={product.name} dimensions={{ width: dimensions.width, depth: dimensions.depth, height: dimensions.height }} color={color} opacity={conflict ? 0.82 : 1} profile={product.visualProfile} emphasized={selected || conflict} />
+    <group position={[position.x, position.y, dimensions.height / 2]} rotation={[0, 0, item.transform?.rotationZ ?? 0]}>
+      <group rotation={[Math.PI / 2, 0, 0]}>
+        <group onPointerDown={startDrag}>
+          <FurnitureModel category={product.category} name={product.name} dimensions={{ width: dimensions.width, depth: dimensions.depth, height: dimensions.height }} color={color} opacity={conflict ? 0.82 : 1} profile={product.visualProfile} emphasized={selected || conflict} />
+        </group>
+        {(selected || conflict) && (
+          <lineSegments>
+            <edgesGeometry args={[new THREE.BoxGeometry(dimensions.width + 0.025, dimensions.height + 0.025, dimensions.depth + 0.025)]} />
+            <lineBasicMaterial color={selected ? "#fff3bf" : "#7e1e15"} />
+          </lineSegments>
+        )}
       </group>
-      {(selected || conflict) && (
-        <lineSegments>
-          <edgesGeometry args={[new THREE.BoxGeometry(dimensions.width + 0.025, dimensions.height + 0.025, dimensions.depth + 0.025)]} />
-          <lineBasicMaterial color={selected ? "#fff3bf" : "#7e1e15"} />
-        </lineSegments>
-      )}
       {(selected || conflict) && <Text
-        position={[0, dimensions.height / 2 + 0.12, 0]}
+        position={[0, 0, dimensions.height / 2 + 0.12]}
         fontSize={0.09}
         color="#fffdf8"
         outlineColor="#21332d"
@@ -203,6 +206,57 @@ function FurnitureItem({
       >{conflict ? `! ${product.name}` : product.name}</Text>}
     </group>
   );
+}
+
+function featureWall(feature: RoomFeature, project: Project): NonNullable<RoomFeature["wall"]> {
+  if (feature.wall && feature.wall !== "unknown") return feature.wall;
+  const distances = [
+    ["west", feature.position.x],
+    ["east", project.room.width - feature.position.x],
+    ["south", feature.position.y],
+    ["north", project.room.length - feature.position.y],
+  ] as const;
+  return [...distances].sort((a, b) => a[1] - b[1])[0][0];
+}
+
+function RoomFeatureModel({ feature, project }: { feature: RoomFeature; project: Project }) {
+  const wall = featureWall(feature, project);
+  const turns = wall === "east" || wall === "west";
+  const size: [number, number, number] = turns
+    ? [feature.depth, feature.width, feature.height]
+    : [feature.width, feature.depth, feature.height];
+  const elevation = feature.elevation ?? (feature.kind === "window" ? 0.9 : 0);
+  const opacity = feature.confirmed ? 0.92 : 0.58;
+  const colors: Record<RoomFeature["kind"], string> = {
+    door: "#8d623f",
+    window: "#8fc4d3",
+    closet: "#9a8067",
+    radiator: "#d7d7cf",
+    obstacle: "#c78362",
+  };
+  const color = colors[feature.kind];
+
+  return <group position={[feature.position.x, feature.position.y, elevation + feature.height / 2]}>
+    <mesh castShadow receiveShadow>
+      <boxGeometry args={size} />
+      {feature.kind === "window"
+        ? <meshPhysicalMaterial color={color} transparent opacity={opacity * 0.7} roughness={0.12} metalness={0.18} />
+        : <meshStandardMaterial color={color} transparent={!feature.confirmed} opacity={opacity} roughness={0.72} />}
+    </mesh>
+    <lineSegments>
+      <edgesGeometry args={[new THREE.BoxGeometry(...size)]} />
+      <lineBasicMaterial color={feature.confirmed ? "#30483d" : "#d96a47"} transparent opacity={0.88} />
+    </lineSegments>
+    {feature.kind === "door" && <mesh position={turns ? [0, feature.width * 0.34, 0] : [feature.width * 0.34, 0, 0]}>
+      <sphereGeometry args={[0.045, 12, 8]} />
+      <meshStandardMaterial color="#d8ad55" metalness={0.6} roughness={0.28} />
+    </mesh>}
+    <Billboard position={[0, 0, feature.height / 2 + 0.13]}>
+      <Text fontSize={0.1} color={feature.confirmed ? "#263c32" : "#a3422e"} outlineColor="#fffdf8" outlineWidth={0.009} anchorX="center">
+        {feature.confirmed ? feature.name : `? ${feature.name}`}
+      </Text>
+    </Billboard>
+  </group>;
 }
 
 function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, gridSize, snapToGrid, moveStep }: RoomCanvasProps & { gridSize: number; snapToGrid: boolean; moveStep: number | null }) {
@@ -229,44 +283,45 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
   };
   const wallColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex ?? "#e7dfd0";
   const floorColor = project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("floor"))?.hex ?? "#a77f59";
-  const center = useMemo(() => new THREE.Vector3(project.room.width / 2, 0.55, project.room.length / 2), [project.room.length, project.room.width]);
+  const center = useMemo(() => new THREE.Vector3(project.room.width / 2, project.room.length / 2, 0.55), [project.room.length, project.room.width]);
 
   return (
     <>
       <color attach="background" args={["#d6ddd9"]} />
       <fog attach="fog" args={["#d6ddd9", 8, 16]} />
       <ambientLight intensity={1.8} />
-      <directionalLight position={[2, 7, 5]} intensity={2.5} castShadow shadow-mapSize={[1024, 1024]} />
+      <directionalLight position={[2, 5, 7]} intensity={2.5} castShadow shadow-mapSize={[1024, 1024]} />
       <CameraRig project={project} command={viewCommand} controlsRef={controls} />
       <OrbitControls ref={controls} enabled={!dragging} makeDefault target={center} minDistance={2} maxDistance={12} maxPolarAngle={Math.PI / 2.02} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[project.room.width / 2, -0.025, project.room.length / 2]} receiveShadow onPointerDown={() => onSelectItem?.("")}>
+      <mesh position={[project.room.width / 2, project.room.length / 2, -0.025]} receiveShadow onPointerDown={() => onSelectItem?.("")}>
         <boxGeometry args={[project.room.width, project.room.length, 0.05]} />
         <meshStandardMaterial color={floorColor} roughness={0.92} />
       </mesh>
       <FloorGrid width={project.room.width} length={project.room.length} cell={gridSize} />
-      <mesh position={[-0.04, project.room.height / 2, project.room.length / 2]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, project.room.height, project.room.length]} />
+      <mesh position={[-0.04, project.room.length / 2, project.room.height / 2]} castShadow receiveShadow>
+        <boxGeometry args={[0.08, project.room.length, project.room.height]} />
         <meshStandardMaterial color={wallColor} />
       </mesh>
-      {!cutaway && <mesh position={[project.room.width / 2, project.room.height / 2, -0.04]} castShadow receiveShadow>
-        <boxGeometry args={[project.room.width, project.room.height, 0.08]} />
+      {!cutaway && <mesh position={[project.room.width / 2, -0.04, project.room.height / 2]} castShadow receiveShadow>
+        <boxGeometry args={[project.room.width, 0.08, project.room.height]} />
         <meshStandardMaterial color={wallColor} />
       </mesh>}
-      <mesh position={[project.room.width / 2, project.room.height / 2, project.room.length + 0.04]} castShadow receiveShadow>
-        <boxGeometry args={[project.room.width, project.room.height, 0.08]} />
+      <mesh position={[project.room.width / 2, project.room.length + 0.04, project.room.height / 2]} castShadow receiveShadow>
+        <boxGeometry args={[project.room.width, 0.08, project.room.height]} />
         <meshStandardMaterial color={wallColor} />
       </mesh>
-      {!cutaway && <mesh position={[project.room.width + 0.04, project.room.height / 2, project.room.length / 2]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, project.room.height, project.room.length]} />
+      {!cutaway && <mesh position={[project.room.width + 0.04, project.room.length / 2, project.room.height / 2]} castShadow receiveShadow>
+        <boxGeometry args={[0.08, project.room.length, project.room.height]} />
         <meshStandardMaterial color={wallColor} />
       </mesh>}
+      {project.room.features.map((feature) => <RoomFeatureModel key={feature.id} feature={feature} project={project} />)}
       {project.room.clearanceZones.map((zone) => (
-        <group key={zone.id} position={[zone.position.x, 0.012, zone.position.z]}>
-          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <group key={zone.id} position={[zone.position.x, zone.position.y, 0.012]}>
+          <mesh>
             <planeGeometry args={[zone.width, zone.depth]} />
             <meshBasicMaterial color="#e97055" transparent opacity={0.26} side={THREE.DoubleSide} />
           </mesh>
-          <Text position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.12} color="#762b20" anchorX="center">KEEP CLEAR</Text>
+          <Text position={[0, 0, 0.02]} fontSize={0.12} color="#762b20" anchorX="center">KEEP CLEAR</Text>
         </group>
       ))}
       {project.items.filter((item) => item.purchaseStatus !== "deferred").map((item) => (
@@ -290,7 +345,7 @@ export function RoomCanvas(props: RoomCanvasProps) {
   const { gridSize, snapToGrid, stepMoves, moveStep } = useUnitPreferences();
   return (
     <div className="room-canvas">
-      <Canvas shadows dpr={[1, 1.6]} camera={{ fov: 42, near: 0.05, far: 100 }} gl={{ antialias: true }}>
+      <Canvas shadows dpr={[1, 1.6]} camera={{ fov: 42, near: 0.05, far: 100, up: [0, 0, 1] }} gl={{ antialias: true }}>
         <Scene {...props} gridSize={gridSize} snapToGrid={snapToGrid} moveStep={stepMoves ? moveStep : null} />
       </Canvas>
       <GridScaleLegend showMovement={Boolean(props.onMoveItem)} />
