@@ -109,11 +109,26 @@ The seeded demo uses only real products from the furnishing shortlist and delibe
 - a $589.95 known subtotal against a $400 group budget
 - Maya's BARLAST lamp starts unplaced in the fixture, so its fit is unverified (when a saved project loads, the app auto-places shortlist items, so in the browser the lamp usually appears already placed)
 
-The demo marks the TORALD desk and the Frigidaire 10 L mini fridge as alternatives to the desk and fridge in the cart. Better Cart only swaps to a shortlist product in the same alternative group, so other catalog items are never suggested automatically.
+Better Cart can swap an item for any catalog product in the same category, or in the same `alternativeGroupId` for products marked as interchangeable. The replacement needs a price and known dimensions, must be allowed by the confirmed rules, and must fit at a collision-tested spot. Alternatives whose price fits the budget rank first, then the ones closest in size to the original. To close a budget gap, it takes the swap that saves the most for the smallest change in size.
 
-Generate Better Cart to swap the fridge for its permitted alternative, defer the duplicate lamp, swap to the compact TORALD desk at a collision-tested placement, and move the pouf out of the door swing. With every proposal action accepted, deterministic tests verify a $194.94 subtotal and resolution of fit, clearance, budget, duplicate, and rule issues; in the fixture, Maya's unplaced lamp is correctly still reported as fit-unverified.
+Generate Better Cart to swap the fridge for the closest-sized permitted one (the Frigidaire 10 L), defer the duplicate lamp, and swap the desk for the same-size, cheaper LAGKAPTEN / ADILS to get under budget. With every proposal action accepted, deterministic tests verify a $244.94 subtotal and resolution of fit, clearance, budget, duplicate, and rule issues; in the fixture, Maya's unplaced lamp is correctly still reported as fit-unverified.
 
-Saved browser copies of the earlier demo (which used made-up products) are replaced with this demo on load; **Reset demo** also restores it.
+### Better Cart test room
+
+**Better Cart test · Birch Attic 3B** sits next to the demo in **Your rooms**. It gives Better Cart one problem for each kind of fix, all using real catalog products. The room is an attic double with a 1.95 m ceiling and a $600 budget, and the cart starts at $1,594.94. Open it, go to **06 Better Cart**, and choose **Generate Better Cart**. You should get six changes:
+
+| Problem | Expected change |
+| --- | --- |
+| Jay's Upstreman 3.2 cu ft fridge breaks the hall's 3.0 cu ft rule | Replace it with the Frigidaire 10 L, the closest-sized permitted fridge |
+| Both roommates plan a floor lamp | Defer Jay's pricier LAUTERS, since Maya's BARLAST covers lighting |
+| The HAUGA wardrobe (1.99 m) is taller than the ceiling, which moving can't fix | Swap for the KLEPPSTAD 3-door, same footprint and 1.76 m tall |
+| The KIVIK sofa has no free spot anywhere, and neither does the KLIPPAN loveseat | Swap for the GLOSTAD loveseat, which fits between the beds |
+| Maya's JÄLL hamper sits on her bed, and no cheaper hamper exists | Move it to the nearest free spot |
+| The cart is still $79.93 over budget | Swap the LAGKAPTEN / ALEX desk for the same-size, cheaper LAGKAPTEN / ADILS |
+
+Accepting everything leaves no open issues and a $519.93 cart ($80.07 under budget). If you rank **Keep the products we chose** first in Constraints, the wardrobe and sofa are still swapped because they can't stay as they are. The desk is left alone, and the over-budget note names LAGKAPTEN / ADILS as the cheaper option you passed over. `src/lib/proposals.test.ts` and the Playwright suite check all of this.
+
+Saved browser copies of the earlier demo (which used made-up products) are replaced with this demo on load; **Reset demo** restores both built-in rooms, and the test room is added to saved rooms that predate it.
 
 ## Verification
 

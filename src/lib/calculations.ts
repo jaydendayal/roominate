@@ -137,6 +137,30 @@ export function collidingItemIds(project: Project, item: Item, footprintOnly = f
     .map((other) => other.id);
 }
 
+/**
+ * True when `item` would get a fit or clearance issue from `physicalIssues`: crossing a wall, the
+ * floor, or the ceiling, in a keep-clear area, or colliding with another item. Checks only this
+ * item's pairs, so placement searches can call it per candidate spot.
+ */
+export function placementBlocked(project: Project, item: Item) {
+  const bounds = itemBounds(project, item);
+  if (!bounds) return false;
+  const height = productFor(project, item)?.dimensions.height;
+  const elevation = itemElevation(item);
+  if (footprintOutsideRoom(project, item, bounds) || elevation < -VERTICAL_EPSILON) return true;
+  if (height != null && elevation + height > project.room.height + VERTICAL_EPSILON) return true;
+  if (project.room.clearanceZones.some((zone) => overlap(bounds, zoneBounds(zone.position, zone.width, zone.depth)))) return true;
+  const box = itemBox(project, item);
+  return project.items.some((other) => {
+    if (other.id === item.id || other.purchaseStatus === "deferred") return false;
+    const otherBounds = itemBounds(project, other);
+    if (!otherBounds || !overlap(bounds, otherBounds)) return false;
+    // Without a known height, stay conservative and treat overlapping footprints as a collision.
+    const otherBox = itemBox(project, other);
+    return !(box && otherBox && !verticalOverlap(box.bottom, box.top, otherBox.bottom, otherBox.top));
+  });
+}
+
 /** True when the item sits on the floor or on top of another item rather than floating or sinking. */
 export function restsOnSurface(project: Project, item: Item) {
   const elevation = itemElevation(item);

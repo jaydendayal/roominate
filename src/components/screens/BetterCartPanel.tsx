@@ -8,6 +8,7 @@ import { priorityInfo, priorityOrder } from "@/lib/priorities";
 import { applyAcceptedProposal, generateProposal } from "@/lib/proposals";
 import { downloadShoppingList } from "@/lib/shoppingList";
 import type { Issue, Project, Proposal } from "@/lib/types";
+import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { RoomCanvas } from "../RoomCanvas";
 
 interface ExplanationResponse {
@@ -22,6 +23,7 @@ function previewWithProposal(project: Project, proposal: Proposal): Project {
 export function BetterCartPanel({ project, issues, update, captureUndo }: { project: Project; issues: Issue[]; update: (updater: (project: Project) => Project, captureUndo?: boolean) => void; captureUndo: () => void }) {
   const [generating, setGenerating] = useState(false);
   const [explanationStatus, setExplanationStatus] = useState("");
+  const units = useUnitPreferences();
   const proposal = project.proposal;
   const previewProject = useMemo(() => proposal ? previewWithProposal(project, proposal) : null, [project, proposal]);
   const previewIssues = previewProject ? calculateIssues(previewProject) : [];
@@ -29,7 +31,7 @@ export function BetterCartPanel({ project, issues, update, captureUndo }: { proj
   const generate = async () => {
     setGenerating(true);
     setExplanationStatus("");
-    const next = generateProposal(project);
+    const next = generateProposal(project, { formatSize: units.formatDimensions });
     update((current) => ({ ...current, proposal: next }));
     setGenerating(false);
     try {

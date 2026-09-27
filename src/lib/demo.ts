@@ -10,25 +10,13 @@ const evidence = {
   confirmedByUser: true,
 };
 
-// The demo room is built only from real shortlist products (no made-up items).
-// A few demo-only annotations give Better Cart something to work with:
-// - alternativeGroupId marks products the group treats as interchangeable, which lets
-//   Better Cart swap between them (other shortlist items are never used as swaps);
-// - "over-3-cu-ft" marks fridges above the Maple Hall size limit for the housing rule.
-const demoAnnotations: Record<string, Partial<Pick<Product, "alternativeGroupId">> & { extraTags?: string[] }> = {
-  "shortlist-lagkapten-alex": { alternativeGroupId: "demo-desks" },
-  "shortlist-torald": { alternativeGroupId: "demo-desks" },
-  "shortlist-igloo-32": { alternativeGroupId: "demo-fridges", extraTags: ["over-3-cu-ft"] },
-  "shortlist-frigidaire-10l": { alternativeGroupId: "demo-fridges" },
-  "shortlist-upstreman-32": { extraTags: ["over-3-cu-ft"] },
-};
+// The demo room is built only from real shortlist products (no made-up items). Better Cart
+// swaps between any of them in the same category; the one demo-only annotation tags the
+// fridges above the Maple Hall size limit for the housing rule.
+const overSizeLimit = new Set(["shortlist-igloo-32", "shortlist-upstreman-32"]);
 
-export const demoProducts: Product[] = shortlistProducts.map((product) => {
-  const annotation = demoAnnotations[product.id];
-  if (!annotation) return product;
-  const { extraTags = [], ...fields } = annotation;
-  return { ...product, ...fields, tags: [...product.tags, ...extraTags] };
-});
+export const demoProducts: Product[] = shortlistProducts.map((product) =>
+  overSizeLimit.has(product.id) ? { ...product, tags: [...product.tags, "over-3-cu-ft"] } : product);
 
 // A tidy dorm layout (the room is 3.66 m west-east by 3.05 m south-north; the entry door
 // swings in at the south-west corner and the window is on the north wall):
@@ -205,7 +193,7 @@ export function createDemoProject(): Project {
     },
     products: [...structuredClone(demoProducts), bedProduct("twin_xl")],
     items: structuredClone(demoItems),
-    // $400 keeps the cart over budget after the rule and duplicate fixes, so Better Cart demonstrates a desk swap.
+    // $400 keeps the cart over budget after the rule and duplicate fixes, so Better Cart demonstrates a same-size desk swap.
     budgetAmount: 40000,
     budgetCurrency: "USD",
     priorities: [...DEFAULT_PRIORITIES],
@@ -228,6 +216,84 @@ export function createDemoProject(): Project {
     cartVersion: 1,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+export const BETTER_CART_TEST_PROJECT_ID = "project-better-cart-test";
+
+/** Built-in rooms: always listed, restored by Reset demo, and never deleted. */
+export const isBuiltInProject = (id: string) => id === "project-demo" || id === BETTER_CART_TEST_PROJECT_ID;
+
+function testItem(id: string, productId: string, ownerId: string, [x, y]: [number, number], rotationZ: number, extra: Partial<Item> = {}): Item {
+  return {
+    id,
+    productId,
+    ownerId,
+    acquisitionStatus: "buying",
+    purchaseStatus: "in_cart",
+    quantity: 1,
+    essentiality: "optional",
+    needsServed: [],
+    transform: { position: { x, y }, rotationZ },
+    placementType: "floor",
+    ...extra,
+  };
+}
+
+// A room built to exercise every Better Cart path with real catalog products. It is an attic
+// double, 3.66 m west-east by 3.35 m south-north under a 1.95 m ceiling. The entry door swings in
+// at the south-west corner, and each roommate's Twin XL bed runs along a side wall. Each problem
+// calls for a different fix:
+// - rule: Jay's Upstreman 3.2 cu ft fridge is over the hall's size limit, so it is replaced with
+//   the closest-sized permitted fridge (Frigidaire 10 L);
+// - duplicate: both roommates plan a floor lamp, so Jay's pricier LAUTERS is deferred;
+// - ceiling: Jay's HAUGA wardrobe (1.99 m) is taller than the attic ceiling and moving can't fix
+//   that, so it becomes the same-footprint, shorter KLEPPSTAD 3-door;
+// - no room: Maya's KIVIK sofa (2.28 m) has no free spot in any orientation, and neither does the
+//   KLIPPAN loveseat, so it becomes the GLOSTAD loveseat that fits between the beds;
+// - overlap: Maya's JÄLL hamper sits on her bed and is already the cheapest hamper, so it moves;
+// - budget: the cart is still over the $600 limit, so the desk becomes the same-size, cheaper
+//   LAGKAPTEN / ADILS.
+export function createBetterCartTestProject(): Project {
+  const project = createDemoProject();
+  const jay = "person-jay";
+  const maya = "person-maya";
+  return {
+    ...project,
+    id: BETTER_CART_TEST_PROJECT_ID,
+    name: "Better Cart test · Birch Attic 3B",
+    roomType: "Attic double",
+    room: {
+      ...project.room,
+      id: "room-better-cart-test",
+      width: 3.66,
+      length: 3.35,
+      height: 1.95,
+      features: [
+        { id: "door-entry", name: "Entry door", kind: "door", position: { x: 0.5, y: 0.04 }, width: 0.86, depth: 0.08, height: 1.9, wall: "south", confirmed: true },
+        { id: "window-dormer", name: "Dormer window", kind: "window", position: { x: 1.83, y: 3.31 }, width: 0.9, depth: 0.08, height: 0.9, elevation: 0.9, wall: "north", confirmed: true },
+      ],
+      clearanceZones: [
+        { id: "clear-door-entry", name: "Entry door swing", position: { x: 0.5, y: 0.47 }, width: 0.9, depth: 0.9, source: "user_confirmed", confirmed: true },
+      ],
+      palette: [],
+    },
+    items: [
+      { ...structuredClone(demoItems[0]), transform: { position: { x: 0.52, y: 2.27 }, rotationZ: 0 } },
+      { ...structuredClone(demoItems[0]), id: `${ROOM_BED_ITEM_ID}-maya`, ownerId: maya, transform: { position: { x: 3.14, y: 2.27 }, rotationZ: 0 } },
+      testItem("item-wardrobe", "shortlist-hauga-wardrobe", jay, [1.64, 0.28], Math.PI, { essentiality: "essential", needsServed: ["wardrobe"] }),
+      testItem("item-fridge", "shortlist-upstreman-32", jay, [2.5, 0.24], Math.PI, { needsServed: ["mini fridge"] }),
+      testItem("item-desk", "shortlist-lagkapten-alex", jay, [1.83, 3.04], 0, { essentiality: "essential", needsServed: ["workspace"] }),
+      testItem("item-chair", "shortlist-flintan", jay, [1.83, 2.35], Math.PI, { acquisitionStatus: "owned", purchaseStatus: "not_purchasing", essentiality: "essential", needsServed: ["seating"] }),
+      testItem("item-lamp-jay", "shortlist-lauters", jay, [1.23, 2.45], 0, { needsServed: ["room-lighting"] }),
+      testItem("item-lamp-maya", "shortlist-barlast", maya, [2.45, 2.45], 0, { acquisitionStatus: "planned", needsServed: ["room-lighting"] }),
+      testItem("item-sofa", "shortlist-kivik-sofa", maya, [1.83, 1.45], 0, { needsServed: ["couch"] }),
+      testItem("item-hamper", "shortlist-jall", maya, [2.6, 1.3], 0, { needsServed: ["laundry"] }),
+      testItem("item-dresser", "shortlist-storklinta-3", maya, [3.25, 0.25], Math.PI, { acquisitionStatus: "owned", purchaseStatus: "not_purchasing", essentiality: "essential", needsServed: ["storage"] }),
+    ],
+    budgetAmount: 60000,
+    needs: ["sleeping", "workspace", "storage", "room-lighting"],
+    rules: [{ ...project.rules[0], label: "Birch Hall appliance policy" }],
   };
 }
 
