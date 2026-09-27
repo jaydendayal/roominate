@@ -31,6 +31,26 @@ def _output_text(response: dict[str, Any]) -> str:
     raise OpenAIUnavailable("The model returned no structured text output.")
 
 
+def _web_sources(response: dict[str, Any]) -> list[dict[str, str]]:
+    found: list[dict[str, str]] = []
+    for item in response.get("output", []):
+        action = item.get("action") if isinstance(item, dict) else None
+        for source in (action.get("sources", []) if isinstance(action, dict) else []):
+            if isinstance(source, dict) and isinstance(source.get("url"), str):
+                found.append({"url": source["url"], "title": str(source.get("title") or "")})
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for content in item.get("content", []):
+            for annotation in content.get("annotations", []) if isinstance(content, dict) else []:
+                citation = annotation.get("url_citation", annotation) if isinstance(annotation, dict) else {}
+                if isinstance(citation, dict) and isinstance(citation.get("url"), str):
+                    found.append({"url": citation["url"], "title": str(citation.get("title") or "")})
+    unique: dict[str, dict[str, str]] = {}
+    for source in found:
+        unique.setdefault(source["url"], source)
+    return list(unique.values())
+
+
 class OpenAIService:
     def __init__(self, settings: Settings, store: AIStore) -> None:
         self.settings = settings
@@ -97,5 +117,48 @@ class OpenAIService:
             self.store.fail(request_id)
             raise
 
+    async def discover_dorm_sources(self, *, project_id: str, college: str, residence_hall: str, room_type: str | None = None) -> tuple[list[dict[str, str]], dict[str, int]]:
+        if not self.settings.openai_api_key:
+            raise OpenAIUnavailable("OPENAI_API_KEY is not configured.")
+        request_id = self.store.reserve(project_id, "dorm-web-search", self.settings.max_estimated_call_usd)
+        requested_design = f' for the "{room_type}" room design' if room_type else ""
+        query = (
+            f'Find official pages published by {college} about "{residence_hall}"{requested_design} that contain dorm room dimensions, floor plans, '
+            "mattress or bed sizes, or dimensions of provided desks, dressers, wardrobes, chairs, and other furniture. "
+            "Prefer readable pages on the university housing domain. Do not use social media, student blogs, rental sites, Reddit, or Wikipedia."
+        )
+        payload = {
+            "model": self.settings.openai_model,
+            "tools": [{"type": "web_search", "external_web_access": True}],
+            "tool_choice": "required",
+            "include": ["web_search_call.action.sources"],
+            "input": query,
+            "max_output_tokens": 300,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                response = await client.post(
+                    "https://api.openai.com/v1/responses",
+                    headers={"Authorization": f"Bearer {self.settings.openai_api_key}", "Content-Type": "application/json"},
+                    json=payload,
+                )
+            if response.status_code >= 400:
+                detail = response.json().get("error", {}).get("message", "OpenAI web search failed")
+                raise OpenAIUnavailable(str(detail))
+            body = response.json()
+            usage = body.get("usage") or {}
+            input_tokens = int(usage.get("input_tokens") or 0)
+            output_tokens = int(usage.get("output_tokens") or 0)
+            actual = (
+                input_tokens / 1_000_000 * self.settings.input_cost_per_million
+                + output_tokens / 1_000_000 * self.settings.output_cost_per_million
+                + self.settings.web_search_cost_usd
+            )
+            self.store.finalize(request_id, actual, input_tokens, output_tokens)
+            return _web_sources(body), {"input_tokens": input_tokens, "output_tokens": output_tokens}
+        except (httpx.HTTPError, ValueError, OpenAIUnavailable):
+            self.store.fail(request_id)
+            raise
 
-__all__ = ["OpenAIService", "OpenAIUnavailable", "SpendGuardError"]
+
+__all__ = ["OpenAIService", "OpenAIUnavailable", "SpendGuardError", "_web_sources"]

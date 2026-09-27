@@ -10,6 +10,7 @@ interface StoredPreferences {
   unitSystem: UnitSystem;
   gridSize: Record<UnitSystem, number>;
   snapToGrid: boolean;
+  snapToFurniture: boolean;
   /** When on, drags move only in whole multiples of moveStep (meters). Combines with snapToGrid (applied on release). */
   stepMoves: boolean;
   moveStep: number;
@@ -30,7 +31,7 @@ function localeDefaultSystem(): UnitSystem {
 
 function loadPreferences(): StoredPreferences {
   const system = localeDefaultSystem();
-  const fallback: StoredPreferences = { unitSystem: system, gridSize: { ...defaultGridSize }, snapToGrid: false, stepMoves: false, moveStep: DEFAULT_MOVE_STEP[system] };
+  const fallback: StoredPreferences = { unitSystem: system, gridSize: { ...defaultGridSize }, snapToGrid: false, snapToFurniture: false, stepMoves: false, moveStep: DEFAULT_MOVE_STEP[system] };
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return fallback;
@@ -43,6 +44,7 @@ function loadPreferences(): StoredPreferences {
       unitSystem: parsed.unitSystem === "imperial" || parsed.unitSystem === "metric" ? parsed.unitSystem : fallback.unitSystem,
       gridSize: { metric: grid("metric"), imperial: grid("imperial") },
       snapToGrid: parsed.snapToGrid === true,
+      snapToFurniture: parsed.snapToFurniture === true,
       stepMoves: parsed.stepMoves === true,
       moveStep: validStep(parsed.moveStep) ? parsed.moveStep : fallback.moveStep,
     };
@@ -60,6 +62,9 @@ interface UnitPreferences {
   /** When on, items align their edges to grid lines or walls when a drag ends or an item is rotated. */
   snapToGrid: boolean;
   setSnapToGrid: (snap: boolean) => void;
+  /** When on, a nearby furniture edge overrides the grid and attaches flush to the neighboring item. */
+  snapToFurniture: boolean;
+  setSnapToFurniture: (snap: boolean) => void;
   /** When on, dragged items move only in whole multiples of moveStep from where they started. */
   stepMoves: boolean;
   setStepMoves: (enabled: boolean) => void;
@@ -75,7 +80,7 @@ interface UnitPreferences {
 const UnitPreferencesContext = createContext<UnitPreferences | null>(null);
 
 export function UnitPreferencesProvider({ children }: { children: ReactNode }) {
-  const [preferences, setPreferences] = useState<StoredPreferences>({ unitSystem: "metric", gridSize: { ...defaultGridSize }, snapToGrid: false, stepMoves: false, moveStep: DEFAULT_MOVE_STEP.metric });
+  const [preferences, setPreferences] = useState<StoredPreferences>({ unitSystem: "metric", gridSize: { ...defaultGridSize }, snapToGrid: false, snapToFurniture: false, stepMoves: false, moveStep: DEFAULT_MOVE_STEP.metric });
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -98,6 +103,7 @@ export function UnitPreferencesProvider({ children }: { children: ReactNode }) {
   ), []);
   // Independent: steps apply while dragging, grid snap applies on release, so they combine.
   const setSnapToGrid = useCallback((snapToGrid: boolean) => setPreferences((current) => ({ ...current, snapToGrid })), []);
+  const setSnapToFurniture = useCallback((snapToFurniture: boolean) => setPreferences((current) => ({ ...current, snapToFurniture })), []);
   const setStepMoves = useCallback((stepMoves: boolean) => setPreferences((current) => ({ ...current, stepMoves })), []);
   const setMoveStep = useCallback((moveStep: number) => setPreferences((current) => (validStep(moveStep) ? { ...current, moveStep } : current)), []);
 
@@ -110,6 +116,8 @@ export function UnitPreferencesProvider({ children }: { children: ReactNode }) {
       setGridSize,
       snapToGrid: preferences.snapToGrid,
       setSnapToGrid,
+      snapToFurniture: preferences.snapToFurniture,
+      setSnapToFurniture,
       stepMoves: preferences.stepMoves,
       setStepMoves,
       moveStep: preferences.moveStep,
@@ -119,7 +127,7 @@ export function UnitPreferencesProvider({ children }: { children: ReactNode }) {
       roomUnit: lengthUnitFor(system, "room"),
       objectUnit: lengthUnitFor(system, "object"),
     };
-  }, [preferences, setGridSize, setMoveStep, setSnapToGrid, setStepMoves, setUnitSystem]);
+  }, [preferences, setGridSize, setMoveStep, setSnapToFurniture, setSnapToGrid, setStepMoves, setUnitSystem]);
 
   return <UnitPreferencesContext.Provider value={value}>{children}</UnitPreferencesContext.Provider>;
 }

@@ -7,6 +7,7 @@ import type { BedSize, Item, Product, Project } from "./types";
 // the cart.
 
 const INCH = 0.0254;
+export const MAX_BED_LOFT_METERS = 60 * INCH;
 
 export interface BedSizeInfo {
   id: BedSize;

@@ -133,7 +133,7 @@ export function InviteDialog({
         </header>
         {!collaboration ? (
           <>
-            <div className="invite-hero"><span><Users size={24} /></span><div><strong>Share the plan, not the private media</strong><p>The room, inventory, placements, and cart are shared. Original photos, videos, and product screenshots stay in this browser.</p></div></div>
+            <div className="invite-hero"><span><Users size={24} /></span><div><strong>Share the plan, not private product evidence</strong><p>The room, inventory, placements, and cart are shared. Original product screenshots stay in this browser.</p></div></div>
             <div className="invite-options">
               <label>Permission<select value={permission} onChange={(event) => setPermission(event.target.value as "view" | "edit")}><option value="edit">Can edit and publish</option><option value="view">View only</option></select></label>
               <label>Expires<select value={expiresInHours} onChange={(event) => setExpiresInHours(Number(event.target.value))}><option value={24}>In 24 hours</option><option value={72}>In 3 days</option><option value={168}>In 7 days</option></select></label>

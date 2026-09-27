@@ -162,16 +162,6 @@ export function createDemoProject(): Project {
         length: { ...evidence, source: "user_confirmed" },
         height: { ...evidence, source: "user_confirmed" },
       },
-      mediaAssets: [
-        {
-          id: "media-demo",
-          name: "move-in walkthrough · frame 03",
-          type: "image",
-          dataUrl: "/demo-room.svg",
-          privacy: "private",
-          size: 182400,
-        },
-      ],
       features: [
         {
           id: "door-entry",
@@ -208,9 +198,9 @@ export function createDemoProject(): Project {
       geometryVersion: 1,
       reconstructionStatus: "reviewed",
       palette: [
-        { id: "swatch-wall", hex: "#e7dfd0", label: "warm wall", source: "walkthrough · likely wall", pinned: true },
-        { id: "swatch-floor", hex: "#a77f59", label: "maple floor", source: "walkthrough · likely floor", pinned: false },
-        { id: "swatch-sage", hex: "#7f9186", label: "sage accent", source: "walkthrough · furnishing", pinned: false },
+        { id: "swatch-wall", hex: "#e7dfd0", label: "warm wall", source: "demo palette · likely wall", pinned: true },
+        { id: "swatch-floor", hex: "#a77f59", label: "maple floor", source: "demo palette · likely floor", pinned: false },
+        { id: "swatch-sage", hex: "#7f9186", label: "sage accent", source: "demo palette · furnishing", pinned: false },
       ],
     },
     products: [...structuredClone(demoProducts), bedProduct("twin_xl")],
@@ -256,7 +246,6 @@ export function createBlankProject(name = "Untitled room"): Project {
       length: 3.4,
       height: 2.4,
       reconstructionStatus: "manual",
-      mediaAssets: [],
       features: [],
       clearanceZones: [],
       palette: [],

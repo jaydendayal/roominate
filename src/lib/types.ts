@@ -57,15 +57,6 @@ export interface Evidence {
   note?: string;
 }
 
-export interface MediaAsset {
-  id: string;
-  name: string;
-  type: "image" | "video";
-  dataUrl?: string;
-  privacy: "private" | "shared";
-  size: number;
-}
-
 export interface RoomFeature {
   id: string;
   name: string;
@@ -119,7 +110,6 @@ export interface Room {
    */
   providedBed?: BedSize | "none";
   dimensionEvidence: Record<"width" | "length" | "height", Evidence>;
-  mediaAssets: MediaAsset[];
   features: RoomFeature[];
   clearanceZones: ClearanceZone[];
   geometryVersion: number;
