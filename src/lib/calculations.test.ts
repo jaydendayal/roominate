@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isRoomBedItem } from "./beds";
-import { createDemoProject } from "./demo";
-import { calculateIssues, collidingItemIds, itemBounds, itemExceedsRoom, itemHasConflict, productFor, purchaseSubtotal, restsOnSurface, settledElevation, stackedElevation } from "./calculations";
+import { createBetterCartTestProject, createDemoProject } from "./demo";
+import { calculateIssues, collidingItemIds, itemBounds, itemExceedsRoom, itemHasConflict, physicalIssues, placementBlocked, productFor, purchaseSubtotal, restsOnSurface, settledElevation, stackedElevation } from "./calculations";
 import { applyAcceptedProposal, generateProposal } from "./proposals";
 
 const item = (project: ReturnType<typeof createDemoProject>, id: string) => project.items.find((candidate) => candidate.id === id)!;
@@ -166,17 +166,17 @@ describe("Roominate deterministic engines", () => {
   it("validates the complete demo proposal through the same issue engine", () => {
     const project = createDemoProject();
     const proposal = generateProposal(project);
-    // Swap the over-limit fridge for its permitted alternative, defer the duplicate lamp, and swap
-    // the desk for its compact alternative to get under budget. The layout itself is conflict-free.
+    // Swap the over-limit fridge for the closest-sized permitted one, defer the duplicate lamp, and
+    // swap the desk for a same-size cheaper one to get under budget. The layout itself is conflict-free.
     expect(proposal.changes.map((change) => [change.type, change.itemId, change.replacementProductId ?? null])).toEqual([
       ["replace", "item-fridge", "shortlist-frigidaire-10l"],
       ["defer", "item-lamp-jay", null],
-      ["replace", "item-desk", "shortlist-torald"],
+      ["replace", "item-desk", "shortlist-lagkapten-adils"],
     ]);
     proposal.changes = proposal.changes.map((change) => ({ ...change, accepted: true }));
     const next = applyAcceptedProposal({ ...project, proposal });
     const remainingTypes = new Set(calculateIssues(next).map((issue) => issue.type));
-    expect(purchaseSubtotal(next).amount).toBe(19494);
+    expect(purchaseSubtotal(next).amount).toBe(24494);
     expect(remainingTypes.has("fit")).toBe(false);
     expect(remainingTypes.has("clearance")).toBe(false);
     expect(remainingTypes.has("budget")).toBe(false);
@@ -185,11 +185,30 @@ describe("Roominate deterministic engines", () => {
     expect(remainingTypes.has("missing_data")).toBe(true);
   });
 
-  it("only swaps to shortlist products placed in the same alternative group", () => {
+  it("flags a blocked placement exactly when the full issue check would", () => {
+    const shaped = createDemoProject();
+    shaped.room.outline = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 0.6 }, { x: 0.6, y: 0.6 }, { x: 0.6, y: 1 }, { x: 0, y: 1 }];
+    for (const project of [createDemoProject(), createBetterCartTestProject(), shaped]) {
+      for (const moving of project.items) {
+        for (let x = 0; x <= project.room.width; x += 0.25) {
+          for (let y = 0; y <= project.room.length; y += 0.25) {
+            for (const rotationZ of [0, Math.PI / 2]) {
+              const moved = { ...moving, transform: { position: { x, y }, rotationZ } };
+              const trial = { ...project, items: project.items.map((candidate) => candidate.id === moving.id ? moved : candidate) };
+              const expected = physicalIssues(trial).some((issue) => (issue.type === "fit" || issue.type === "clearance") && issue.affectedItemIds.includes(moving.id));
+              expect(placementBlocked(trial, moved), `${project.id} ${moving.id} at ${x.toFixed(2)}, ${y.toFixed(2)}`).toBe(expected);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("swaps to any catalog product of the same category, with no alternative groups set", () => {
     const project = createDemoProject();
-    // Without the demo's alternative groups, no shortlist desk is offered as a swap for the desk.
-    project.products = project.products.map((product) => ({ ...product, alternativeGroupId: undefined }));
-    const proposal = generateProposal(project);
-    expect(proposal.changes.some((change) => change.itemId === "item-desk" && change.type === "replace")).toBe(false);
+    expect(project.products.some((product) => product.alternativeGroupId)).toBe(false);
+    const desk = generateProposal(project).changes.find((change) => change.itemId === "item-desk");
+    expect(desk).toMatchObject({ type: "replace", replacementProductId: "shortlist-lagkapten-adils" });
+    expect(desk?.impact).toContain("same size");
   });
 });

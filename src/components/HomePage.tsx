@@ -5,6 +5,7 @@ import { useMemo, useRef, useState } from "react";
 import { AlertTriangle, CircleDollarSign, Copy, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { calculateIssues, cents, featureWall, itemHasConflict, productFor, purchaseSubtotal } from "@/lib/calculations";
+import { isBuiltInProject } from "@/lib/demo";
 import { roomPolygon } from "@/lib/roomShape";
 import type { Issue, Project } from "@/lib/types";
 import { Brand } from "./Brand";
@@ -196,7 +197,7 @@ export function HomePage({ projects, current, onChooseCurrent, onOpen, onCreate,
                       <button className="primary-button small" onClick={() => onOpen(project.id)}>Open room</button>
                       {!isCurrent && <button className="secondary-button small" onClick={() => { onChooseCurrent(project.id); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Show in model</button>}
                       <button className="icon-button" title="Duplicate" aria-label={`Duplicate ${project.name}`} onClick={() => onDuplicate(project.id)}><Copy size={16} /></button>
-                      {project.id !== "project-demo" && <button className="icon-button danger" title="Delete" aria-label={`Delete ${project.name}`} onClick={() => setPendingDeleteId(project.id)}><Trash2 size={16} /></button>}
+                      {!isBuiltInProject(project.id) && <button className="icon-button danger" title="Delete" aria-label={`Delete ${project.name}`} onClick={() => setPendingDeleteId(project.id)}><Trash2 size={16} /></button>}
                     </div>
                   )}
                 </div>

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { calculateIssues, purchaseSubtotal } from "./calculations";
-import { createBlankProject, createDemoProject } from "./demo";
+import { createBetterCartTestProject, createBlankProject, createDemoProject } from "./demo";
 import { applyAcceptedProposal, generateProposal } from "./proposals";
+import { shortlistProducts } from "./shortlist";
 import type { HousingRule, Item, Product, Project, Proposal } from "./types";
 
 // A user-created project: no fixture IDs, custom categories, rules, and zones.
@@ -138,7 +139,7 @@ describe("Better Cart follows the group's priorities and required functions", ()
     const keep = generateProposal({ ...plan, priorities: keepPicksFirst });
     expect(keep.changes.map((change) => change.type)).toEqual(["reposition"]);
     expect(keep.changes[0].reason).toContain("you rank keeping the products you chose above the budget");
-    expect(keep.blockers?.find((blocker) => blocker.includes("over budget"))).toContain("cheaper equivalents exist");
+    expect(keep.blockers?.find((blocker) => blocker.includes("over budget"))).toContain("cheaper equivalents exist (such as Test bed-small");
   });
 
   it("defers optional items instead of swapping chosen products when keeping picks ranks first", () => {
@@ -168,6 +169,120 @@ describe("Better Cart follows the group's priorities and required functions", ()
     const lit = generateProposal({ ...plan, needs: ["room-lighting"] });
     expect(lit.changes).toEqual([]);
     expect(lit.blockers?.find((blocker) => blocker.includes("over budget"))).toContain("the only ones covering lighting");
+  });
+});
+
+const swaps = (proposal: Proposal) => proposal.changes.map((change) => [change.type, change.itemId, change.replacementProductId ?? null]);
+
+describe("Better Cart recommends alternatives that fit the price and the room", () => {
+
+  it("offers the built-in catalog's products as alternatives in a user's own room", () => {
+    const plan = project(shortlistProducts, [item("i-wardrobe", "shortlist-hauga-wardrobe", [1.5, 0.4], { essentiality: "essential" })], { room: { ...project([], []).room, height: 1.9 } });
+    const [change] = generateProposal(plan).changes;
+    // KLEPPSTAD 3-door has HAUGA's footprint and is short enough; the 2-door ones are narrower.
+    expect(change).toMatchObject({ type: "replace", replacementProductId: "shortlist-kleppstad-wardrobe-3" });
+    expect(change.reason).toContain("closest-sized wardrobe");
+    expect(physicalFor(acceptAll(plan, generateProposal(plan)), "i-wardrobe")).toEqual([]);
+  });
+
+  it("fixes a misfit with the closest-sized alternative, not the cheapest", () => {
+    const products = [product("case-tall", "storage", [0.8, 0.3, 2.6], 9000), product("case-short", "storage", [0.8, 0.3, 1.8], 7000), product("cube", "storage", [0.3, 0.3, 0.3], 1000)];
+    const [change] = generateProposal(project(products, [item("i-case", "case-tall", [1.5, 1.7])])).changes;
+    expect(change).toMatchObject({ type: "replace", replacementProductId: "case-short" });
+    expect(change.impact).toContain("80 × 30 × 180 cm, was 80 × 30 × 260 cm");
+  });
+
+  it("passes over a closer alternative whose price would break the budget", () => {
+    const products = [product("case-tall", "storage", [0.8, 0.3, 2.6], 9000), product("case-pricey", "storage", [0.8, 0.3, 2.2], 20000), product("case-short", "storage", [0.8, 0.3, 1.8], 7000)];
+    const plan = project(products, [item("i-case", "case-tall", [1.5, 1.7])], { budgetAmount: 15000 });
+    expect(swaps(generateProposal(plan))).toEqual([["replace", "i-case", "case-short"]]);
+    expect(swaps(generateProposal({ ...plan, budgetAmount: 100000 }))).toEqual([["replace", "i-case", "case-pricey"]]);
+  });
+
+  it("closes a budget gap with the closest-sized cheaper equivalent, not the biggest saving", () => {
+    const products = [product("desk", "desk", [1.2, 0.6, 0.75], 30000), product("desk-same", "desk", [1.2, 0.6, 0.75], 25000), product("desk-tiny", "desk", [0.65, 0.4, 0.75], 3000)];
+    const [change] = generateProposal(project(products, [item("i-desk", "desk", [1.5, 0.4])], { budgetAmount: 28000 })).changes;
+    expect(change).toMatchObject({ type: "replace", replacementProductId: "desk-same" });
+    expect(change.impact).toContain("same size");
+  });
+
+  it("prefers two close matches to one drastic swap when both get under budget", () => {
+    const products = [
+      product("chair", "chair", [0.62, 0.6, 1.4], 30000), product("chair-close", "chair", [0.67, 0.67, 1.11], 10000), product("chair-low", "chair", [0.67, 0.67, 0.9], 6000),
+      product("sofa", "couch", [2.28, 0.95, 0.83], 80000), product("sofa-close", "couch", [1.8, 0.88, 0.66], 38000), product("sofa-small", "couch", [1.21, 0.78, 0.68], 17000),
+    ];
+    const plan = project(products, [item("i-chair", "chair", [0.5, 2.8]), item("i-sofa", "sofa", [1.5, 0.6])], { budgetAmount: 50000 });
+    const proposal = generateProposal(plan);
+    expect(swaps(proposal)).toEqual([["replace", "i-sofa", "sofa-close"], ["replace", "i-chair", "chair-close"]]);
+    expect(purchaseSubtotal(acceptAll(plan, proposal)).amount).toBeLessThanOrEqual(50000);
+  });
+
+  it("swaps an item it cannot move out of a keep-clear area for one that fits clear of it", () => {
+    const zone = { id: "zone-door", name: "Door swing", position: { x: 0.5, y: 0.5 }, width: 1, depth: 1, source: "user_confirmed" as const, confirmed: true };
+    const products = [product("bench", "bench", [1.5, 0.5, 0.45], 12000), product("bench-short", "bench", [0.9, 0.5, 0.45], 9000)];
+    const plan = project(products, [item("i-bench", "bench", [1, 0.5])], { room: { ...project([], []).room, width: 2, length: 1, clearanceZones: [zone] } });
+    const proposal = generateProposal(plan);
+    expect(swaps(proposal)).toEqual([["replace", "i-bench", "bench-short"]]);
+    expect(proposal.changes[0].reason).toContain("door swing");
+    expect(physicalFor(acceptAll(plan, proposal), "i-bench")).toEqual([]);
+  });
+
+  it("never treats uncategorized products as interchangeable", () => {
+    const products = [product("thing", "uncategorized", [0.8, 0.3, 2.6], 9000), product("other", "uncategorized", [0.8, 0.3, 1.8], 7000)];
+    const proposal = generateProposal(project(products, [item("i-thing", "thing", [1.5, 1.7])]));
+    expect(proposal.changes).toEqual([]);
+    expect(proposal.blockers?.[0]).toContain("exceeds ceiling height");
+  });
+});
+
+describe("Better Cart test room", () => {
+  const room = createBetterCartTestProject();
+  const proposal = generateProposal(room);
+  const change = (itemId: string) => proposal.changes.find((candidate) => candidate.itemId === itemId)!;
+
+  it("starts with one problem for every Better Cart path", () => {
+    expect(calculateIssues(room).map((issue) => issue.id)).toEqual(expect.arrayContaining([
+      "rule-rule-fridge-size-item-fridge",
+      "duplicate-item-lamp-jay::item-lamp-maya",
+      "ceiling-item-wardrobe",
+      "overlap-item-room-bed-item-sofa",
+      "overlap-item-hamper-item-room-bed-maya",
+      "budget-over",
+    ]));
+  });
+
+  it("fixes each problem with a catalog alternative that fits the room and the price, moving or deferring only where that is right", () => {
+    expect(swaps(proposal)).toEqual([
+      ["replace", "item-fridge", "shortlist-frigidaire-10l"],
+      ["defer", "item-lamp-jay", null],
+      ["replace", "item-wardrobe", "shortlist-kleppstad-wardrobe-3"],
+      ["replace", "item-sofa", "shortlist-glostad"],
+      ["reposition", "item-hamper", null],
+      ["replace", "item-desk", "shortlist-lagkapten-adils"],
+    ]);
+    expect(change("item-fridge").reason).toContain("closest-sized mini fridge that Birch Hall appliance policy permits");
+    expect(change("item-wardrobe").reason).toContain("taller than the ceiling");
+    expect(change("item-sofa").reason).toContain("no free spot anywhere in the room");
+    expect(change("item-desk").impact).toContain("same size");
+  });
+
+  it("clears every fit, clearance, rule, duplicate, and budget issue once all changes are accepted", () => {
+    const next = acceptAll(room, proposal);
+    expect(purchaseSubtotal(next).amount).toBe(51993);
+    expect(calculateIssues(next)).toEqual([]);
+  });
+
+  it("keeps every placement valid when only that one change is accepted", () => {
+    for (const { id, itemId } of proposal.changes.filter((candidate) => candidate.position)) {
+      const next = applyAcceptedProposal({ ...room, proposal: { ...proposal, changes: proposal.changes.map((candidate) => ({ ...candidate, accepted: candidate.id === id })) } });
+      expect(physicalFor(next, itemId), id).toEqual([]);
+    }
+  });
+
+  it("still swaps what cannot be moved when keeping picks ranks first, but leaves the desk and names its cheaper twin", () => {
+    const keep = generateProposal({ ...room, priorities: ["keep_picks", "budget", "even_split"] });
+    expect(swaps(keep)).toEqual(swaps(proposal).slice(0, 5));
+    expect(keep.blockers?.find((blocker) => blocker.includes("over budget"))).toContain("such as LAGKAPTEN / ADILS for LAGKAPTEN / ALEX");
   });
 });
 
