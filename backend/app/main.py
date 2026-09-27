@@ -13,13 +13,17 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
+from pydantic import TypeAdapter, ValidationError
+
 from .openai_service import OpenAIService, OpenAIUnavailable, SpendGuardError
 from .image_codec import ImageConversionError, heic_to_jpeg, is_heic
+from .plan_reader import reviewed_plan_reading
 from .schemas import (
     ExplainProposalRequest,
     Explanation,
     ExplanationAIResult,
     ExtractedPrice,
+    FloorPlanAIResult,
     FurnitureVisualAIResult,
     FurnitureVisualProfile,
     PaletteCandidate,
@@ -28,6 +32,7 @@ from .schemas import (
     ProductVisualRequest,
     RoomAIResult,
     RoomGeometryDraft,
+    TracedWall,
     UrlImportRequest,
     ShoppingSearchRequest,
     CreateInviteRequest,
@@ -371,6 +376,78 @@ async def analyze_room(
     except Exception as exc:
         result = _manual_room(confirmed, f"Model output was unavailable or invalid: {type(exc).__name__}.")
         return _room_response(result, "manual_fallback", "Analysis failed safely; the confirmed room remains editable.")
+
+
+_TRACED_WALLS = TypeAdapter(list[TracedWall])
+
+
+def _plan_response(reading: dict[str, Any], status: str, message: str, usage: dict[str, int] | None = None) -> dict[str, Any]:
+    return {**reading, "status": status, "message": message, "usage": usage or {"input_tokens": 0, "output_tokens": 0}}
+
+
+def _empty_plan_reading(note: str) -> dict[str, Any]:
+    return {"schema_version": "1.0", "processing_status": "partial", "dimensions": [], "openings": [], "uncertainties": [note]}
+
+
+@app.post("/api/v1/read-floor-plan")
+async def read_floor_plan(
+    project_id: Annotated[str, Form(min_length=1, max_length=120, pattern=r"^[a-zA-Z0-9_-]+$")],
+    walls: Annotated[str, Form(max_length=8000)],
+    files: Annotated[list[UploadFile], File()] = [],
+) -> dict[str, Any]:
+    """Reads printed dimensions and openings for one traced room. The browser traces the outline itself;
+    this only reads labels, and code (not the model) turns printed text into meters."""
+    try:
+        traced = _TRACED_WALLS.validate_json(walls)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="walls must be a JSON list of lettered wall segments in image fractions") from exc
+    if not 3 <= len(traced) <= 64 or len({wall.label for wall in traced}) != len(traced):
+        raise HTTPException(status_code=422, detail="walls must list 3 to 64 uniquely lettered walls")
+    images, _ = await _read_media(files)
+    if not images:
+        raise HTTPException(status_code=422, detail="Upload the floor plan image to read it.")
+    walls_json = json.dumps([wall.model_dump() for wall in traced], sort_keys=True)
+    cache_mode = f"{settings.openai_model}:high" if openai.enabled else "manual"
+    cache_key = store.cache_key("floor-plan", PROMPT_VERSION, [cache_mode, walls_json] + [data for data, _ in images])
+    if cached := store.get_cached(cache_key):
+        cached["status"] = "cached"
+        return cached
+    if not openai.enabled:
+        return _plan_response(_empty_plan_reading("Printed dimensions were not read."), "manual_fallback", "OPENAI_API_KEY is not configured, so printed dimensions can't be read. Enter a wall length you know instead.")
+    prompt = (
+        "You read architectural floor plans. Image 1 is a floor plan. Image 2 is the same plan with one room's traced outline drawn in magenta "
+        "and its walls lettered (A, B, C, ...) in boxes just outside the outline. Report only what is printed or drawn on the plan for that outlined room. "
+        "dimensions: each printed dimension string that measures the outlined room. Copy the text exactly as printed, such as 12'-6\" or 3.81 m, and split a "
+        "combined label such as 11'-8\" x 13'-2\" into two entries. Set spans to wall with that wall's letter when it measures one lettered wall, "
+        "overall_width when it is the room's full left-to-right extent in the image, overall_length for the full top-to-bottom extent, and other for anything else. "
+        "Never compute, convert, scale, or estimate a length, and never report a dimension that is not printed. "
+        "openings: doors (a gap in the wall with a swing arc or leaf), windows (thin parallel lines within a wall), closets, radiators, and fixed obstacles "
+        "belonging to the outlined room. position is the opening's center as fractions of the image width and height, with the top-left at 0,0. "
+        "wall_label is the lettered wall it sits in, or null for an interior item. width_ratio is the share of that wall the opening spans when the drawing shows it, else null. "
+        "uncertainties: illegible text, missing scale, or anything ambiguous. Use empty lists when nothing qualifies. Evidence names the visible region or label."
+    )
+    wall_list = "; ".join(f"{wall.label} ({wall.start.x:.3f}, {wall.start.y:.3f}) to ({wall.end.x:.3f}, {wall.end.y:.3f})" for wall in traced)
+    try:
+        result, usage = await openai.structured_response(
+            project_id=project_id,
+            operation="floor-plan",
+            system_prompt=prompt,
+            user_text=f"Lettered walls of the traced room, as image fractions (x right, y down): {wall_list}.",
+            result_type=FloorPlanAIResult,
+            images=images[:2],
+            max_output_tokens=1400,
+            # Dimension labels are small print; low detail can't resolve them.
+            image_detail="high",
+        )
+        reading = reviewed_plan_reading(result, traced)
+        message = "Choose which printed dimensions to use. Doors and windows are added unconfirmed." if reading["dimensions"] or reading["openings"] else "No printed dimensions or openings were found for this room. Enter a wall length you know instead."
+        response = _plan_response(reading, "complete" if result.processing_status == "complete" else "partial", message, usage)
+        store.put_cached(cache_key, "floor-plan", response)
+        return response
+    except SpendGuardError:
+        raise
+    except Exception as exc:
+        return _plan_response(_empty_plan_reading(f"Model output was unavailable or invalid: {type(exc).__name__}."), "manual_fallback", "The plan couldn't be read automatically. Enter a wall length you know instead.")
 
 
 def _metadata_product(metadata: dict[str, object], source_url: str, note: str) -> ProductAIResult:

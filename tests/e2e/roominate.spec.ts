@@ -1,3 +1,4 @@
+import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 const browserErrors = new WeakMap<Page, Error[]>();
@@ -228,6 +229,52 @@ test("room analysis turns detected structure into reviewable 3D features", async
   await page.getByRole("button", { name: "Confirm" }).click();
   await expect(page.getByText(/north wall · confirmed/)).toBeVisible();
   await expect(page.locator(".capture-canvas canvas")).toBeVisible();
+});
+
+test("floor plan scan traces an L-shaped room and scales it from a printed wall length", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific floor plan flow");
+  await page.route("**/api/v1/read-floor-plan", async (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      status: "complete",
+      schema_version: "1.0",
+      processing_status: "complete",
+      message: "Choose which printed dimensions to use. Doors and windows are added unconfirmed.",
+      dimensions: [{ text: "12'-0\"", meters: 3.6576, spans: "wall", wall_label: "A", confidence: 0.9, evidence: "Label above the top wall" }],
+      openings: [{ kind: "door", label: "Plan entry door", wall_label: "B", position: { x: 0.835, y: 0.28 }, width_ratio: 0.4, confidence: 0.8, evidence: "Swing arc on wall B" }],
+      uncertainties: [],
+    }),
+  }));
+
+  await page.getByRole("button", { name: "Create a room" }).click();
+  await page.getByRole("button", { name: /Scan a floor plan/ }).click();
+  await page.getByLabel("Choose a floor plan image").setInputFiles(path.join(__dirname, "fixtures", "floor-plan-l-room.png"));
+  await expect(page.getByRole("heading", { name: "Check the traced walls" })).toBeVisible();
+  // An L has six walls, lettered A to F.
+  await expect(page.getByLabel(/Measured length of wall F/)).toBeVisible();
+  await expect(page.getByLabel(/Measured length of wall G/)).toHaveCount(0);
+  await expect(page.getByText("Scale not measured.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Read printed dimensions" }).click();
+  await page.getByRole("list", { name: "Printed dimensions" }).getByRole("button", { name: "Use" }).click();
+  await expect(page.getByText("Measured scale.")).toBeVisible();
+  await expect(page.getByLabel(/Measured length of wall A/)).toHaveValue("12");
+  await page.getByRole("button", { name: "Use this shape" }).click();
+
+  await expect(page.getByRole("heading", { name: "Check the traced walls" })).toHaveCount(0);
+  await expect(page.getByText("Traced shape", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^6 walls/)).toBeVisible();
+  await expect(page.getByLabel("Overall width")).toHaveValue("12");
+  await expect(page.getByText("Plan entry door")).toBeVisible();
+  await expect(page.getByText(/east wall · needs review/)).toBeVisible();
+  await expect(page.locator(".capture-canvas canvas")).toBeVisible();
+
+  // Typing a measured length keeps the traced proportions.
+  const length = Number(await page.getByLabel("Overall length").inputValue());
+  await page.getByLabel("Overall width").fill("24");
+  await page.getByLabel("Overall width").blur();
+  await expect.poll(async () => Number(await page.getByLabel("Overall length").inputValue())).toBeCloseTo(length * 2, 1);
 });
 
 test("phone layout keeps the 3D room and primary tabs usable without page overflow", async ({ page }, testInfo) => {

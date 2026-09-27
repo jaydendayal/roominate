@@ -1,3 +1,4 @@
+import { convexInsidePolygon, hasShapedOutline, nearestWallFacing, roomPolygon } from "./roomShape";
 import type { Dimensions, DuplicateResolution, Issue, Item, Product, Project, RoomFeature, Vec2 } from "./types";
 
 export interface Bounds {
@@ -46,16 +47,34 @@ export function itemBounds(project: Project, item: Item): Bounds | null {
   };
 }
 
+/** Corners of the item's footprint on the floor, turned by its rotation. */
+function itemCorners(project: Project, item: Item): Vec2[] | null {
+  if (!item.transform) return null;
+  const dimensions = productFor(project, item)?.dimensions;
+  if (dimensions?.width == null || dimensions.depth == null) return null;
+  const { position, rotationZ } = item.transform;
+  const cos = Math.cos(rotationZ);
+  const sin = Math.sin(rotationZ);
+  const halfWidth = dimensions.width / 2;
+  const halfDepth = dimensions.depth / 2;
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => ({
+    x: position.x + sx * halfWidth * cos - sy * halfDepth * sin,
+    y: position.y + sx * halfWidth * sin + sy * halfDepth * cos,
+  }));
+}
+
+/** True when the footprint crosses a wall: the room rectangle's, or a traced outline's. */
+function footprintOutsideRoom(project: Project, item: Item, bounds: Bounds) {
+  const { room } = project;
+  if (!hasShapedOutline(room)) return bounds.minX < 0 || bounds.maxX > room.width || bounds.minY < 0 || bounds.maxY > room.length;
+  const corners = itemCorners(project, item);
+  return corners != null && !convexInsidePolygon(corners, roomPolygon(room));
+}
+
 /** The wall a feature belongs to: its recorded wall, or else the nearest one. */
 export function featureWall(feature: RoomFeature, project: Project): NonNullable<RoomFeature["wall"]> {
   if (feature.wall && feature.wall !== "unknown") return feature.wall;
-  const distances = [
-    ["west", feature.position.x],
-    ["east", project.room.width - feature.position.x],
-    ["south", feature.position.y],
-    ["north", project.room.length - feature.position.y],
-  ] as const;
-  return [...distances].sort((a, b) => a[1] - b[1])[0][0];
+  return nearestWallFacing(project.room, feature.position);
 }
 
 export function itemElevation(item: Item) {
@@ -85,13 +104,23 @@ function itemBox(project: Project, item: Item): ItemBox | null {
   return { ...bounds, bottom, top: bottom + height };
 }
 
-/** True when any part of the item's collision box pokes through a wall, the floor, or the ceiling. */
-export function itemExceedsRoom(project: Project, item: Item) {
+/**
+ * True when any part of the item's collision box pokes out of the room's bounding box: its overall
+ * width and length, the floor, or the ceiling. For a rectangular room this is the same as leaving the room.
+ */
+export function itemExceedsRoomBox(project: Project, item: Item) {
   const box = itemBox(project, item);
   if (!box) return false;
   const { width, length, height } = project.room;
   return box.minX < 0 || box.maxX > width || box.minY < 0 || box.maxY > length
     || box.bottom < -VERTICAL_EPSILON || box.top > height + VERTICAL_EPSILON;
+}
+
+/** True when any part of the item's collision box pokes through a wall (including a traced outline's), the floor, or the ceiling. */
+export function itemExceedsRoom(project: Project, item: Item) {
+  const box = itemBox(project, item);
+  if (!box) return false;
+  return itemExceedsRoomBox(project, item) || footprintOutsideRoom(project, item, box);
 }
 
 /** Ids of other placed items whose collision boxes intersect `item` (footprint only when `footprintOnly`). */
@@ -251,7 +280,7 @@ export function physicalIssues(project: Project, { formatLength = formatMeters }
     }
     const bounds = itemBounds(project, item);
     if (bounds) {
-      if (bounds.minX < 0 || bounds.maxX > project.room.width || bounds.minY < 0 || bounds.maxY > project.room.length) {
+      if (footprintOutsideRoom(project, item, bounds)) {
         issues.push({
           id: `boundary-${item.id}`,
           type: "fit",

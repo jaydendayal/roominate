@@ -7,10 +7,11 @@ import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { LengthInput } from "./LengthInput";
-import { calculateIssues, collidingItemIds, featureWall, itemElevation, itemExceedsRoom, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
+import { calculateIssues, collidingItemIds, featureWall, itemElevation, itemExceedsRoom, itemExceedsRoomBox, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
 import { visualProfileFor } from "@/lib/productModels";
+import { floorGridSegments, roomPolygon, wallSegments } from "@/lib/roomShape";
 import { normalizeRotation, snapItemPosition, snapRotation, stepPosition } from "@/lib/snap";
-import type { Issue, Item, Project, RoomFeature, Vec2 } from "@/lib/types";
+import type { Issue, Item, Project, Room, RoomFeature, Vec2 } from "@/lib/types";
 import { gridOptions } from "@/lib/units";
 import { FurnitureModel } from "./FurnitureModel";
 import { personTone } from "./personTones";
@@ -94,20 +95,17 @@ function CameraRig({ project, command, cutaway, controlsRef }: { project: Projec
 
 const MAX_GRID_LINES_PER_AXIS = 400;
 
-/** Floor grid with exact square size, anchored at the room origin corner so squares count out from the walls. */
-function FloorGrid({ width, length, cell }: { width: number; length: number; cell: number }) {
+/** Floor grid with exact square size, anchored at the room origin corner so squares count out from the walls, clipped to the floor. */
+function FloorGrid({ room, cell }: { room: Pick<Room, "width" | "length" | "outline">; cell: number }) {
+  const { width, length, outline } = room;
   const geometry = useMemo(() => {
+    const segments = floorGridSegments({ width, length, outline }, cell, MAX_GRID_LINES_PER_AXIS) ?? [];
     const points: number[] = [];
-    const columns = Math.floor(width / cell + 1e-6);
-    const rows = Math.floor(length / cell + 1e-6);
-    if (columns <= MAX_GRID_LINES_PER_AXIS && rows <= MAX_GRID_LINES_PER_AXIS) {
-      for (let i = 1; i <= columns; i += 1) points.push(i * cell, 0, 0, i * cell, length, 0);
-      for (let j = 1; j <= rows; j += 1) points.push(0, j * cell, 0, width, j * cell, 0);
-    }
+    for (let index = 0; index < segments.length; index += 4) points.push(segments[index], segments[index + 1], 0, segments[index + 2], segments[index + 3], 0);
     const buffer = new THREE.BufferGeometry();
     buffer.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
     return buffer;
-  }, [cell, length, width]);
+  }, [cell, length, outline, width]);
   useEffect(() => () => geometry.dispose(), [geometry]);
   return (
     <lineSegments geometry={geometry} position={[0, 0, 0.004]}>
@@ -339,11 +337,13 @@ function FurnitureItem({
   const rotationZ = item.transform?.rotationZ ?? 0;
   const rotationRadius = Math.hypot(dimensions.width, dimensions.depth) / 2 + 0.16;
 
-  const exceedsRoom = itemExceedsRoom(project, item);
+  // Clip planes can only cut along the room's bounding box, the floor, and the ceiling. That splits out the
+  // part through a rectangular room's walls; an item crossing a traced outline's inner corner is tinted whole instead.
+  const exceedsRoom = itemExceedsRoomBox(project, item);
   // Wall/floor/ceiling violations are shown by the red out-of-room part, so they don't tint the whole item.
   const tintConflict = exceedsRoom
     ? issues.some((issue) => issue.severity === "error" && issue.affectedItemIds.includes(item.id) && !issue.affectedGeometryIds.includes(project.room.id))
-    : conflict;
+    : conflict || itemExceedsRoom(project, item);
   const color = selected ? "#b7b5e4" : tintConflict ? CONFLICT_TINT : item.acquisitionStatus === "owned" ? "#aaa6b3" : personTone(project, item.ownerId).fill;
   // Shortlist products use their own model in the item's chosen finish; others use their imported profile.
   const modelProps = { category: product.category, name: product.name, dimensions: { width: dimensions.width, depth: dimensions.depth, height: dimensions.height }, profile: visualProfileFor(product, item.colorSelection) };
@@ -550,6 +550,53 @@ function RoomFeatureModel({ feature, project }: { feature: RoomFeature; project:
   </group>;
 }
 
+const WALL_THICKNESS = 0.08;
+// Walls whose outside faces the default view (from the south-east) are left out of the cutaway.
+const CUTAWAY_VIEW = { x: Math.SQRT1_2, y: -Math.SQRT1_2 };
+
+/** The room's floor slab and walls, following a traced outline when the room has one. */
+function RoomShell({ room, cutaway, floorColor, wallColor, onFloorPointerDown }: { room: Room; cutaway?: boolean; floorColor: string; wallColor: string; onFloorPointerDown: () => void }) {
+  const { width, length, height, outline } = room;
+  const polygon = useMemo(() => roomPolygon({ width, length, outline }), [length, outline, width]);
+  const floor = useMemo(() => new THREE.ExtrudeGeometry(new THREE.Shape(polygon.map((point) => new THREE.Vector2(point.x, point.y))), { depth: 0.05, bevelEnabled: false }), [polygon]);
+  useEffect(() => () => floor.dispose(), [floor]);
+  const walls = useMemo(() => {
+    const segments = wallSegments(polygon);
+    return segments.map((segment, index) => {
+      // Extend past outside corners so neighbouring walls meet; at inside corners the walls already overlap.
+      const convex = (from: typeof segment, to: typeof segment) => (from.end.x - from.start.x) * (to.end.y - to.start.y) - (from.end.y - from.start.y) * (to.end.x - to.start.x) > 0;
+      const before = convex(segments[(index + segments.length - 1) % segments.length], segment) ? WALL_THICKNESS : 0;
+      const after = convex(segment, segments[(index + 1) % segments.length]) ? WALL_THICKNESS : 0;
+      const direction = { x: (segment.end.x - segment.start.x) / segment.length, y: (segment.end.y - segment.start.y) / segment.length };
+      const shift = (after - before) / 2;
+      return {
+        key: `${index}-${segment.start.x}-${segment.start.y}`,
+        position: [
+          (segment.start.x + segment.end.x) / 2 + direction.x * shift + segment.normal.x * WALL_THICKNESS / 2,
+          (segment.start.y + segment.end.y) / 2 + direction.y * shift + segment.normal.y * WALL_THICKNESS / 2,
+          height / 2,
+        ] as [number, number, number],
+        rotation: Math.atan2(direction.y, direction.x),
+        length: segment.length + before + after,
+        cut: segment.normal.x * CUTAWAY_VIEW.x + segment.normal.y * CUTAWAY_VIEW.y > 0.2,
+      };
+    });
+  }, [height, polygon]);
+  return (
+    <>
+      <mesh geometry={floor} position={[0, 0, -0.05]} receiveShadow onPointerDown={onFloorPointerDown}>
+        <meshStandardMaterial color={floorColor} roughness={0.92} />
+      </mesh>
+      {walls.filter((wall) => !(cutaway && wall.cut)).map((wall) => (
+        <mesh key={wall.key} position={wall.position} rotation={[0, 0, wall.rotation]} castShadow receiveShadow>
+          <boxGeometry args={[wall.length, WALL_THICKNESS, height]} />
+          <meshStandardMaterial color={wallColor} />
+        </mesh>
+      ))}
+    </>
+  );
+}
+
 interface DragPreview {
   itemId: string;
   position: Vec2;
@@ -632,27 +679,8 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
       <directionalLight position={[2, 5, 7]} intensity={2.5} castShadow shadow-mapSize={[1024, 1024]} />
       <CameraRig project={project} command={viewCommand} cutaway={cutaway} controlsRef={controls} />
       <OrbitControls ref={controls} enabled={!dragging} makeDefault target={center} minDistance={MIN_VIEW_DISTANCE} maxDistance={MAX_VIEW_DISTANCE} maxPolarAngle={Math.PI / 2.02} />
-      <mesh position={[project.room.width / 2, project.room.length / 2, -0.025]} receiveShadow onPointerDown={() => onSelectItem?.("")}>
-        <boxGeometry args={[project.room.width, project.room.length, 0.05]} />
-        <meshStandardMaterial color={floorColor} roughness={0.92} />
-      </mesh>
-      <FloorGrid width={project.room.width} length={project.room.length} cell={gridSize} />
-      <mesh position={[-0.04, project.room.length / 2, project.room.height / 2]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, project.room.length, project.room.height]} />
-        <meshStandardMaterial color={wallColor} />
-      </mesh>
-      {!cutaway && <mesh position={[project.room.width / 2, -0.04, project.room.height / 2]} castShadow receiveShadow>
-        <boxGeometry args={[project.room.width, 0.08, project.room.height]} />
-        <meshStandardMaterial color={wallColor} />
-      </mesh>}
-      <mesh position={[project.room.width / 2, project.room.length + 0.04, project.room.height / 2]} castShadow receiveShadow>
-        <boxGeometry args={[project.room.width, 0.08, project.room.height]} />
-        <meshStandardMaterial color={wallColor} />
-      </mesh>
-      {!cutaway && <mesh position={[project.room.width + 0.04, project.room.length / 2, project.room.height / 2]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, project.room.length, project.room.height]} />
-        <meshStandardMaterial color={wallColor} />
-      </mesh>}
+      <RoomShell room={project.room} cutaway={cutaway} floorColor={floorColor} wallColor={wallColor} onFloorPointerDown={() => onSelectItem?.("")} />
+      <FloorGrid room={project.room} cell={gridSize} />
       {project.room.features.map((feature) => <RoomFeatureModel key={feature.id} feature={feature} project={project} />)}
       {project.room.clearanceZones.map((zone) => (
         <group key={zone.id} position={[zone.position.x, zone.position.y, 0.012]}>

@@ -10,6 +10,7 @@ The repository is a working vertical slice built from the supplied PRD:
 - deterministic collision, clearance, duplicate, rule, and budget checks
 - local development persistence with a resettable full-flow demo
 - browser-based guided room capture with six viewpoints, quality feedback, and a measured scale reference
+- floor plan scanning that traces a room's shape (including L-shapes and other non-rectangular rooms) from a plan image, scaled from any one measured or printed wall
 - dimension-scaled procedural 3D models for chairs, couches, desks, wardrobes, hampers, beanbags, ottomans, dressers, lamps, mirrors, and mini fridges
 - schema-constrained OpenAI visual profiles that turn product pictures or descriptions into bounded primitive parts, with safe procedural archetypes as a fallback
 - a built-in 59-item IKEA/Amazon furnishing shortlist with placement dimensions, reviewable pricing evidence, and direct retailer links
@@ -48,6 +49,8 @@ To invite a remote roommate, open a room and choose **Share**. Pick view or edit
 The app remains useful without an OpenAI key: measurements, 3D editing, product manual entry, placement checks, issue detection, and Better Cart all continue to work. AI endpoints return explicit manual fallbacks instead of fabricated values.
 
 The guided scanner needs camera permission and a secure browser context (`localhost` works during development; deployed environments need HTTPS). It records overlapping still images rather than depth data. Roominate samples representative viewpoints for the guarded AI request, retains the complete scan locally when size permits, and requires users to review measurements before relying on fit results.
+
+**Scan a floor plan** (Room capture → Confirm dimensions) traces the room's outline from a screenshot or photo of a housing plan. The tracing runs entirely in the browser and uses no AI. It grows the room's fill colour from the spot you click, absorbs the small pockets that door swings, labels, and furniture outlines cut out of it, and closes doorways so a white room on a white page doesn't leak into the hall. It then straightens the edge into walls, correcting a plan photographed at a slight angle. The walls are lettered A, B, C… clockwise from the top-left. Enter the real length of any one wall and every other wall scales from it; measurements on both axes scale each axis separately. Without a measurement the shape keeps its proportions at the current floor area and is labelled an estimate. A plain rectangle is stored as width × length. Any other shape is stored in `Room.outline` as fractions of the overall width and length, and the fit checks, 3D walls, floor grid, and room thumbnails all follow it. Optionally, **Read printed dimensions** sends the plan and a copy with the lettered outline to `POST /api/v1/read-floor-plan`. The model only transcribes dimension labels and locates doors and windows. Code parses each printed label (such as `12'-6"` or `3.81 m`) into meters and drops anything that doesn't state a length. The user chooses which readings to use, and doors and windows are added unconfirmed.
 
 Room and product-image uploads accept HEIC/HEIF in addition to JPEG, PNG, WebP, and GIF. Because browser and model support varies, HEIC/HEIF uploads are decoded server-side, orientation-corrected, bounded to 50 megapixels, resized to at most 2400 pixels per side, and returned as a non-cached JPEG for preview and analysis. Individual uploads remain capped at 8 MB.
 
@@ -102,7 +105,7 @@ After retailer checkout, **Products → Group cart → Settle expenses** treats 
 
 The browser never receives `OPENAI_API_KEY`. FastAPI sends bounded requests to `/v1/responses` with strict JSON Schemas, validates responses with Pydantic, and then applies deterministic project rules. Model text cannot decide collision, clearance, subtotal, or confirmed policy outcomes.
 
-Results are cached by operation, content hash, prompt/schema version, model, and image-detail setting. A SQLite ledger atomically reserves estimated cost before a call, enforces the aggregate and per-project limits, records actual token usage, and bypasses spend for cache hits. Images are capped in size/count and use low detail by default; videos are sampled to at most three frames when `ffmpeg` is available.
+Results are cached by operation, content hash, prompt/schema version, model, and image-detail setting. A SQLite ledger atomically reserves estimated cost before a call, enforces the aggregate and per-project limits, records actual token usage, and bypasses spend for cache hits. Images are capped in size/count and use low detail by default (floor plan reading uses high detail, because dimension labels are small print); videos are sampled to at most three frames when `ffmpeg` is available.
 
 ## Demo walkthrough
 
@@ -130,13 +133,14 @@ npm run backend:test
 npm run test:e2e
 ```
 
-The Playwright suite covers the desktop demo/proposal/apply/undo flow, the URL-import manual fallback through the running FastAPI service, and a phone viewport with the 3D room and bottom navigation. Install the browser once with `npx playwright install chromium`.
+The Playwright suite covers the desktop demo/proposal/apply/undo flow, the URL-import manual fallback through the running FastAPI service, tracing and scaling an L-shaped floor plan, and a phone viewport with the 3D room and bottom navigation. Install the browser once with `npx playwright install chromium`.
 
 ## Development-scope limitations
 
 - Personal projects remain browser-local. Remote invite snapshots are persisted in the configured SQLite database and support explicit refresh/publish with conflict detection, but they are not realtime and links are bearer-token access rather than account-based production authorization. Use HTTPS and a durable managed database/object store before production.
 - Uploaded files under 3 MB may be retained as local data URLs. Larger files retain metadata only in this development substitute. Production should use private object storage, signed access, and deletion jobs.
-- Room reconstruction returns reviewable geometry/features and palette suggestions, but the current UI uses confirmed rectangular dimensions as its scale anchor rather than a full photogrammetry or LiDAR mesh.
+- Room reconstruction returns reviewable geometry/features and palette suggestions, but the current UI uses confirmed dimensions (or a scaled floor plan outline) as its scale anchor rather than a full photogrammetry or LiDAR mesh.
+- Floor plan tracing works on raster images. PDFs need a screenshot first. Doors and windows on angled walls are drawn square to the nearest compass direction.
 - Product URL extraction depends on what a store permits the backend to read. Blocked pages always fall back to an editable draft with the URL retained.
 - Shipping and tax remain explicitly excluded unless entered into a future persisted cost model.
 - Amazon live search requires an accepted Associates/Creators API account and was designed to degrade to an Amazon browse link when credentials or the service are unavailable. Retailer stock, prices, variants, and fit evidence must still be reconfirmed before purchase.

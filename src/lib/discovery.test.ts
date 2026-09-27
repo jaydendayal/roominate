@@ -14,6 +14,18 @@ describe("retailer candidate fit", () => {
     expect(evaluateCandidateFit(project, { ...project.products[1], id: "candidate" }).status).toBe("fits");
   });
 
+  it("only confirms fit on the floor of a traced outline", () => {
+    const project = createDemoProject();
+    project.items = [];
+    project.room.clearanceZones = [];
+    // The south-west quarter, where the search starts, is not part of this room.
+    project.room.outline = [{ x: 0.5, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }, { x: 0, y: 0.5 }, { x: 0.5, y: 0.5 }];
+    const fit = evaluateCandidateFit(project, { ...project.products[1], id: "candidate" });
+    expect(fit.status).toBe("fits");
+    if (fit.status !== "fits") return;
+    expect(fit.position.x > project.room.width / 2 || fit.position.y > project.room.length / 2).toBe(true);
+  });
+
   it("rejects an item larger than the room", () => {
     const project = createDemoProject();
     const product = { ...project.products[0], id: "huge", dimensions: { width: 8, depth: 8, height: 3 } };
