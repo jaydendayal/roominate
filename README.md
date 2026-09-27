@@ -1,4 +1,4 @@
-# Roominate
+![Roominate](brand/roominate-logo.png)
 
 Roominate is a responsive, shared-room planning app for answering a practical question: does the group cart fit the room, budget, roommate inventory, housing rules, and actual needs?
 
