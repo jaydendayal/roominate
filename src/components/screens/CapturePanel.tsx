@@ -6,6 +6,7 @@ import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { addRoomBed, BED_SIZES, bedSizeOf, DEFAULT_BED_SIZE, removeRoomBed, roomBeds, setRoomBedSize } from "@/lib/beds";
 import { calculateIssues, productFor } from "@/lib/calculations";
 import { apiFetch, normalizeImageUpload } from "@/lib/api";
+import { DOORWAY_EVIDENCE, PLAN_DOOR_SWING_ID } from "@/lib/floorPlan";
 import { FEATURE_DEFAULTS, hasShapedOutline, pointOnWall, roomArea, roomPolygon } from "@/lib/roomShape";
 import type { BedSize, EvidenceSource, MediaAsset, PaletteSwatch, Project, RoomFeature } from "@/lib/types";
 import { ColorChoicePicker } from "../ColorChoicePicker";
@@ -209,8 +210,11 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
         confirmedByUser: result.measured,
         note: result.note,
       };
-      // Doors and windows read from an earlier plan are replaced unless they were confirmed.
-      const retained = current.room.features.filter((feature) => feature.source !== "imported_plan" || feature.confirmed);
+      // Doors and windows read from an earlier plan are replaced unless they were confirmed. A newly marked
+      // doorway replaces one marked on an earlier plan, along with its swing area.
+      const markedAgain = Boolean(result.doorway);
+      const retained = current.room.features.filter((feature) => (feature.source !== "imported_plan" || feature.confirmed) && !(markedAgain && feature.evidence === DOORWAY_EVIDENCE));
+      const zones = current.room.clearanceZones.filter((zone) => !(markedAgain && zone.id.startsWith(PLAN_DOOR_SWING_ID)));
       return {
         ...current,
         room: {
@@ -219,7 +223,8 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
           length: result.length,
           outline: result.outline,
           dimensionEvidence: { ...current.room.dimensionEvidence, width: evidence, length: evidence },
-          features: [...retained, ...result.features],
+          features: [...retained, ...result.features, ...(result.doorway ? [result.doorway.feature] : [])],
+          clearanceZones: [...zones, ...(result.doorway ? [result.doorway.zone] : [])],
           reconstructionStatus: result.measured ? "reviewed" : "estimated",
           geometryVersion: current.room.geometryVersion + 1,
         },

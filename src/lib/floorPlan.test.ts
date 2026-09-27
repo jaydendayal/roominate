@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignOverallDimensions, planOpeningFeatures, planRoomShape, planScale, planWalls, wallLabel, wallMeters } from "./floorPlan";
+import { assignOverallDimensions, DOORWAY_EVIDENCE, PLAN_DOOR_SWING_ID, planDoorway, planOpeningFeatures, planRoomShape, planScale, planWalls, wallLabel, wallMeters } from "./floorPlan";
 import { roomArea } from "./roomShape";
 
 // A traced L in image pixels (y down): 200 × 160 with the bottom-right 100 × 80 missing.
@@ -75,5 +75,35 @@ describe("plan to room", () => {
     expect(door.position.x).toBeCloseTo(5 - 0.04, 6);
     expect(door.position.y).toBeCloseTo(3, 6);
     expect(door.width).toBeCloseTo(2 / 3, 6);
+  });
+});
+
+describe("doorway marked on the plan", () => {
+  const scale = planScale(lOutline, { walls: { 0: 5 }, overall: {} }, 10);
+  const room = planRoomShape(lOutline, scale);
+  const trace = { outline: lOutline, angle: 0, center: { x: 120, y: 90 } };
+  const image = { width: 240, height: 180 };
+
+  it("adds a confirmed door on the clicked wall with a keep-clear swing inside the room", () => {
+    // A click just below the bottom wall of the L's left arm (image y 170), 50 px from its left end.
+    const doorway = planDoorway({ x: 70, y: 173 }, 0.9, trace, image, scale, room)!;
+    expect(doorway.feature).toMatchObject({ kind: "door", name: "Entry door", wall: "south", source: "user_confirmed", confirmed: true, evidence: DOORWAY_EVIDENCE, width: 0.9 });
+    expect(doorway.feature.position.x).toBeCloseTo(1.25, 6);
+    expect(doorway.feature.position.y).toBeCloseTo(0.04, 6);
+    expect(doorway.zone.id.startsWith(PLAN_DOOR_SWING_ID)).toBe(true);
+    expect(doorway.zone).toMatchObject({ width: 0.9, depth: 0.9, confirmed: true });
+    expect(doorway.zone.position.x).toBeCloseTo(1.25, 6);
+    expect(doorway.zone.position.y).toBeCloseTo(0.45, 6);
+  });
+
+  it("slides a door marked at a corner along its wall so it fits", () => {
+    const doorway = planDoorway({ x: 21, y: 170 }, 0.9, trace, image, scale, room)!;
+    expect(doorway.feature.position.x).toBeCloseTo(0.45, 6);
+    expect(doorway.zone.position.x).toBeCloseTo(0.45, 6);
+  });
+
+  it("never makes a door wider than its wall", () => {
+    // That bottom wall is 100 px, 2.5 m at this scale.
+    expect(planDoorway({ x: 70, y: 170 }, 10, trace, image, scale, room)!.feature.width).toBeCloseTo(2.5, 6);
   });
 });

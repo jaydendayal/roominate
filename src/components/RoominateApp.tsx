@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowLeft, Check, House, Menu, RotateCcw, Share2, Users,
 import { useProjectStore } from "@/hooks/useProjectStore";
 import { UnitPreferencesProvider, useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { calculateIssues, cents, purchaseSubtotal } from "@/lib/calculations";
+import { emptyHistory, type ItemHistory } from "@/lib/itemHistory";
 import type { Project } from "@/lib/types";
 import { CapturePanel } from "./screens/CapturePanel";
 import { StudioPanel } from "./screens/StudioPanel";
@@ -56,6 +57,8 @@ function RoominateWorkspace() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [undoProject, setUndoProject] = useState<Project | null>(null);
+  // 3D Studio undo/redo history per project, kept in memory across tab switches.
+  const [studioHistories, setStudioHistories] = useState<Record<string, ItemHistory>>({});
   const [currentId, setCurrentId] = useState<string | null>(null);
   const activeProject = store.projects.find((project) => project.id === activeId) ?? null;
   const currentProject = store.projects.find((project) => project.id === currentId)
@@ -183,7 +186,15 @@ function RoominateWorkspace() {
         </aside>
         <main className="workspace-main">
           {screen === "capture" && <CapturePanel project={activeProject} update={update} onContinue={() => setScreen("studio")} />}
-          {screen === "studio" && <StudioPanel project={activeProject} issues={issues} update={update} onOpenProducts={() => setScreen("products")} onOpenIssues={() => setScreen("issues")} />}
+          {screen === "studio" && <StudioPanel
+            project={activeProject}
+            issues={issues}
+            update={update}
+            history={studioHistories[activeProject.id] ?? emptyHistory}
+            onHistoryChange={(change) => setStudioHistories((all) => ({ ...all, [activeProject.id]: change(all[activeProject.id] ?? emptyHistory) }))}
+            onOpenProducts={() => setScreen("products")}
+            onOpenIssues={() => setScreen("issues")}
+          />}
           {screen === "products" && <ProductsPanel project={activeProject} issues={issues} update={update} />}
           {screen === "constraints" && <ConstraintsPanel project={activeProject} update={update} />}
           {screen === "issues" && <IssuesPanel project={activeProject} issues={issues} update={update} onSelectItem={() => setScreen("studio")} />}

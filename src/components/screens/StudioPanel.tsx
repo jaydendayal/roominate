@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, ChevronRight, Eye, Grid3X3, Lock, Maximize2, Move3D, PackagePlus, RotateCw, ScanLine, ShoppingCart, Unlock } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, ChevronRight, Eye, Grid3X3, Lock, Maximize2, Move3D, PackagePlus, Redo2, RotateCw, ScanLine, ShoppingCart, Undo2, Unlock } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/calculations";
+import { applyItemPatch, nextEdit, recordEdit, redoEdit, undoEdit, type ItemEdit, type ItemHistory, type ItemPatch } from "@/lib/itemHistory";
+import { arrowAxis, isArrowKey, verticalKey } from "@/lib/keyboardMoves";
 import { snapItemPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
 import { ColorChoicePicker } from "../ColorChoicePicker";
@@ -15,41 +17,68 @@ export function StudioPanel({
   project,
   issues,
   update,
+  history,
+  onHistoryChange,
   onOpenProducts,
   onOpenIssues,
 }: {
   project: Project;
   issues: Issue[];
   update: (updater: (project: Project) => Project) => void;
+  history: ItemHistory;
+  onHistoryChange: (change: (history: ItemHistory) => ItemHistory) => void;
   onOpenProducts: () => void;
   onOpenIssues: () => void;
 }) {
   const [selectedId, setSelectedId] = useState(project.items.find((item) => item.transform)?.id ?? null);
   const [cutaway, setCutaway] = useState(true);
   const [viewCommand, setViewCommand] = useState<{ type: "reset" | "overhead"; nonce: number }>({ type: "reset", nonce: 0 });
+  const [isMac, setIsMac] = useState(false);
   const selected = project.items.find((item) => item.id === selectedId);
   const selectedProduct = selected ? productFor(project, selected) : null;
   const selectedIssues = issues.filter((issue) => selectedId && issue.affectedItemIds.includes(selectedId));
   const subtotal = purchaseSubtotal(project);
   const units = useUnitPreferences();
+  const viewOnly = project.collaboration?.permission === "view";
 
-  const changeItem = (itemId: string, patch: Partial<Project["items"][number]>) => {
-    update((current) => ({
-      ...current,
-      items: current.items.map((item) => item.id === itemId ? { ...item, ...patch } : item),
-      cartVersion: current.cartVersion + 1,
-      proposal: current.proposal ? { ...current.proposal, stale: true } : null,
-    }));
+  // Every Studio edit (drag, rotate, lift, typed or nudged move, lock, color, unplace) goes through here and is undoable.
+  // `typed` values change on every keystroke, so quick follow-ups fold into one undo step.
+  const changeItem = (itemId: string, patch: ItemPatch, typed = false) => {
+    if (!viewOnly) onHistoryChange((current) => recordEdit(current, project, itemId, patch, Date.now(), typed));
+    update((current) => applyItemPatch(current, itemId, patch));
   };
+
+  const undoTarget = nextEdit(history, project, "undo");
+  const redoTarget = nextEdit(history, project, "redo");
+  const describe = (edit: ItemEdit | null) => {
+    const item = edit && project.items.find((candidate) => candidate.id === edit.itemId);
+    const name = item ? productFor(project, item)?.name ?? "item" : "";
+    return edit ? `${edit.label.toLowerCase()} ${name}` : "";
+  };
+  const shortcut = (redo: boolean) => isMac ? (redo ? "⇧⌘Z" : "⌘Z") : (redo ? "Ctrl+Y" : "Ctrl+Z");
+
+  const travel = (direction: "undo" | "redo") => {
+    if (viewOnly) return;
+    const result = direction === "undo" ? undoEdit(history, project) : redoEdit(history, project);
+    if (!result) return;
+    const moved = (direction === "undo" ? result.history.future : result.history.past).slice(-1)[0];
+    onHistoryChange(() => result.history);
+    update(() => result.project);
+    if (moved) setSelectedId(moved.itemId);
+  };
+
+  useEffect(() => {
+    setIsMac(/Mac|iPhone|iPad/.test(navigator.userAgent));
+  }, []);
 
   // Per-item lock: freezes position and rotation (drag, lift, typed values, nudges, rotate, unplace) and Better Cart treats it as fixed.
   const toggleLock = (item: Item) => changeItem(item.id, { locked: !item.locked });
 
   // Typed and nudged moves settle like drags: off the top of an item they drop to the floor, into one they land on top.
-  const moveTo = (item: Item, position: Vec2) => {
+  const moveTo = (item: Item, position: Vec2, typed = false) => {
     if (item.locked) return;
     const transform = item.transform ?? { position, rotationZ: 0 };
-    changeItem(item.id, { transform: { ...transform, position, elevation: settledElevation(project, { ...item, transform }, position) } });
+    changeItem(item.id, { transform: { ...transform, position, elevation: settledElevation(project, { ...item, transform }, position) } }, typed);
   };
 
   const rotateSelected = () => {
@@ -73,14 +102,62 @@ export function StudioPanel({
   const moveSelectedAxis = (axis: keyof Vec2, meters: number | null) => {
     if (!selected || meters == null) return;
     const position = { x: selected.transform?.position.x ?? 0, y: selected.transform?.position.y ?? 0, [axis]: meters };
-    moveTo(selected, position);
+    moveTo(selected, position, true);
   };
 
   const setSelectedElevation = (meters: number | null) => {
     if (!selected || selected.locked || meters == null) return;
     const transform = selected.transform ?? { position: { x: project.room.width / 2, y: project.room.length / 2 }, rotationZ: 0 };
-    changeItem(selected.id, { transform: { ...transform, elevation: meters } });
+    changeItem(selected.id, { transform: { ...transform, elevation: meters } }, true);
   };
+
+  // Raises or lowers the selected item by one step; it stops at the floor.
+  const liftSelected = (direction: -1 | 1) => {
+    if (!selected?.transform || selected.locked) return;
+    const current = selected.transform.elevation ?? 0;
+    const elevation = Math.max(0, Number((current + direction * units.moveStep).toFixed(4)));
+    if (elevation !== current) changeItem(selected.id, { transform: { ...selected.transform, elevation } });
+  };
+
+  // Keyboard shortcuts, active while the Studio is open and focus isn't in a text field or color list:
+  // - arrow keys step the selected item along X or Y, whichever matches that direction on screen;
+  // - + and − step it up and down the Z axis;
+  // - Ctrl/⌘+Z undoes; Ctrl+Y or Ctrl/⌘+Shift+Z redoes.
+  // Each press moves by the "Move in steps" distance and is its own undo step.
+  const screenRightRef = useRef<(() => Vec2) | null>(null);
+  const onStudioKey = (event: KeyboardEvent) => {
+    if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true'], [role='listbox'], [aria-haspopup='listbox']")) return;
+    if (event.ctrlKey || event.metaKey) {
+      if (event.altKey) return;
+      const key = event.key.toLowerCase();
+      const direction = key === "z" ? (event.shiftKey ? "redo" : "undo") : key === "y" && !event.shiftKey ? "redo" : null;
+      if (!direction) return;
+      event.preventDefault();
+      travel(direction);
+      return;
+    }
+    if (event.altKey || !selected?.transform) return;
+    if (isArrowKey(event.key)) {
+      event.preventDefault();
+      const { axis, direction } = arrowAxis(event.key, screenRightRef.current?.() ?? { x: 1, y: 0 });
+      nudgeSelected(axis, direction);
+      return;
+    }
+    const vertical = verticalKey(event.key);
+    if (vertical) {
+      event.preventDefault();
+      liftSelected(vertical);
+    }
+  };
+  const keyHandler = useRef(onStudioKey);
+  useEffect(() => {
+    keyHandler.current = onStudioKey;
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => keyHandler.current(event);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="studio-layout">
@@ -124,6 +201,24 @@ export function StudioPanel({
         <div className="viewport-topbar">
           <span className="view-badge"><ScanLine size={14} /> {units.formatLength(project.room.width)} × {units.formatLength(project.room.length)}</span>
           <div>
+            <div className="history-buttons" role="group" aria-label="Edit history">
+              <button
+                type="button"
+                className="viewport-button"
+                disabled={viewOnly || !undoTarget}
+                onClick={() => travel("undo")}
+                aria-label={undoTarget ? `Undo ${describe(undoTarget)}` : "Nothing to undo"}
+                title={undoTarget ? `Undo ${describe(undoTarget)} (${shortcut(false)})` : "Nothing to undo"}
+              ><Undo2 size={16} /><span>Undo</span></button>
+              <button
+                type="button"
+                className="viewport-button"
+                disabled={viewOnly || !redoTarget}
+                onClick={() => travel("redo")}
+                aria-label={redoTarget ? `Redo ${describe(redoTarget)}` : "Nothing to redo"}
+                title={redoTarget ? `Redo ${describe(redoTarget)} (${shortcut(true)})` : "Nothing to redo"}
+              ><Redo2 size={16} /><span>Redo</span></button>
+            </div>
             <button className={`viewport-button ${cutaway ? "active" : ""}`} onClick={() => setCutaway((current) => !current)}><Eye size={16} /><span>Cutaway</span></button>
             <button className="viewport-button" onClick={() => setViewCommand({ type: "overhead", nonce: Date.now() })}><Grid3X3 size={16} /><span>Overhead</span></button>
             <button className="viewport-button" onClick={() => setViewCommand({ type: "reset", nonce: Date.now() })}><Maximize2 size={16} /><span>Reset</span></button>
@@ -140,8 +235,9 @@ export function StudioPanel({
           }}
           cutaway={cutaway}
           viewCommand={viewCommand}
+          screenRightRef={screenRightRef}
         />
-        <div className="viewport-legend"><span><i className="legend-finish" /> Chosen product colors</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag to move · purple ring rotates · blue arrow lifts</span></div>
+        <div className="viewport-legend"><span><i className="legend-finish" /> Chosen product colors</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag to move · purple ring rotates · blue arrow lifts · arrow keys move · + / − raise and lower</span></div>
       </section>
 
       <section className="studio-inspector panel-surface">
@@ -175,12 +271,14 @@ export function StudioPanel({
             </div>
             <div className="nudge-row" role="group" aria-label={`Move by ${stepLabel}`}>
               <span>Move {stepLabel}</span>
-              {([["x", -1, "−X", ArrowLeft], ["x", 1, "+X", ArrowRight], ["y", -1, "−Y", ArrowUp], ["y", 1, "+Y", ArrowDown]] as const).map(([axis, direction, label, Icon]) => (
+              {/* Icons match the default view, where +Y (north) runs up the screen, like the ↑ key. */}
+              {([["x", -1, "−X", ArrowLeft], ["x", 1, "+X", ArrowRight], ["y", 1, "+Y", ArrowUp], ["y", -1, "−Y", ArrowDown]] as const).map(([axis, direction, label, Icon]) => (
                 <button key={label} type="button" className="secondary-button" disabled={selected.locked || !selected.transform} aria-label={`Move ${label} by ${stepLabel}`} title={`Move ${label} by ${stepLabel}`} onClick={() => nudgeSelected(axis, direction)}>
                   <Icon size={14} aria-hidden="true" />{label}
                 </button>
               ))}
             </div>
+            <p className="key-hint"><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move on screen · <kbd>+</kbd><kbd>−</kbd> raise / lower · {stepLabel} per press</p>
             <div className="button-pair">
               <button className="secondary-button" disabled={selected.locked} onClick={rotateSelected}><RotateCw size={16} /> Rotate 90°</button>
               <button className="secondary-button" disabled={selected.locked} onClick={() => changeItem(selected.id, { transform: null })}>Unplace</button>

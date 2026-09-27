@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, ImagePlus, LoaderCircle, MousePointerClick, Ruler, ScanLine, X } from "lucide-react";
+import { AlertTriangle, Check, DoorOpen, ImagePlus, LoaderCircle, MousePointerClick, Ruler, ScanLine, X } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { apiFetch, normalizeImageUpload } from "@/lib/api";
-import { assignOverallDimensions, outlineBox, planOpeningFeatures, planRoomShape, planScale, planWalls, wallMeters, type PlanOpening, type PlanWall } from "@/lib/floorPlan";
+import { assignOverallDimensions, outlineBox, planDoorway, planOpeningFeatures, planRoomShape, planScale, planWalls, wallMeters, type PlanOpening, type PlanWall } from "@/lib/floorPlan";
 import { DEFAULT_TRACE_TOLERANCE, findRoomSeeds, traceFloorPlan, type FloorTrace, type RasterImage, type TraceDetail } from "@/lib/floorPlanTrace";
-import { roomArea } from "@/lib/roomShape";
-import type { Room, RoomFeature, Vec2 } from "@/lib/types";
+import { closestPointOnSegment, FEATURE_DEFAULTS, roomArea } from "@/lib/roomShape";
+import type { ClearanceZone, Room, RoomFeature, Vec2 } from "@/lib/types";
 import { LengthInput } from "../LengthInput";
 
 /** Longest side, in pixels, of the copy the tracer works on. Plenty for walls; keeps a retrace quick. */
@@ -39,6 +39,8 @@ export interface FloorPlanResult extends Pick<Room, "width" | "length" | "outlin
   measured: boolean;
   note: string;
   features: RoomFeature[];
+  /** The entry door the user marked on the plan, with its keep-clear swing area. */
+  doorway: { feature: RoomFeature; zone: ClearanceZone } | null;
 }
 
 /** A wall as drawn over the plan: endpoints in the plan image's pixels, plus where its label goes. */
@@ -170,6 +172,10 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
   const [overall, setOverall] = useState<{ x?: number; y?: number }>({});
   const [reading, setReading] = useState<{ state: "idle" | "loading" | "done" | "error"; message: string; result: FloorPlanReading | null; labels: Record<string, Pinned> }>({ state: "idle", message: "", result: null, labels: {} });
   const [includeOpenings, setIncludeOpenings] = useState(true);
+  // The room's door, marked by clicking a wall on the plan (a point in plan pixels, snapped to the nearest wall).
+  const [doorPoint, setDoorPoint] = useState<Vec2 | null>(null);
+  const [markingDoor, setMarkingDoor] = useState(false);
+  const [doorWidth, setDoorWidth] = useState(FEATURE_DEFAULTS.door.width);
 
   const activeSeed = seed ?? plan?.seeds[0] ?? null;
 
@@ -190,13 +196,21 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
   }, [plan]);
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    // Escape first cancels marking the doorway, then closes the scan.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (markingDoor) setMarkingDoor(false);
+      else onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [markingDoor, onClose]);
 
   const size = plan ? { width: plan.raster.width, height: plan.raster.height } : { width: 1, height: 1 };
-  const labelSize = Math.max(size.width, size.height) * 0.034;
+  // Wall tags stay compact, and shrink further as the outline gains walls (full size up to four) so a
+  // detailed or L-shaped trace doesn't crowd the plan.
+  const wallCount = useMemo(() => (trace ? planWalls(trace.outline).length : 0), [trace]);
+  const labelSize = Math.max(size.width, size.height) * Math.max(0.012, 0.024 * Math.sqrt(4 / Math.max(4, wallCount)));
   const walls = useMemo(() => (trace ? wallViews(trace, labelSize * 1.1) : []), [labelSize, trace]);
   const reach = trace ? Math.hypot(outlineBox(trace.outline).width, outlineBox(trace.outline).height) * 0.12 : 0;
 
@@ -212,6 +226,52 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
   const currentArea = roomArea(room);
   const scale = useMemo(() => (trace ? planScale(trace.outline, { walls: wallMeasurements, overall }, currentArea) : null), [currentArea, overall, trace, wallMeasurements]);
   const shape = useMemo(() => (trace && scale ? planRoomShape(trace.outline, scale) : null), [scale, trace]);
+
+  // Wall tags on the plan show the letter with the wall's length under it. A tag wider than its own wall
+  // shrinks (to 60% at most) so short walls don't sprout oversized tags. Each tag sits just outside its
+  // wall, pushed out by however far the tag reaches toward the wall so it never covers the outline.
+  const lengthSize = labelSize * 0.62;
+  const wallTags = walls.map((wall) => {
+    const length = scale ? units.formatLength(wallMeters(wall, scale)) : "";
+    const span = Math.hypot(wall.to.x - wall.from.x, wall.to.y - wall.from.y) || 1;
+    const fullWidth = Math.max(labelSize * (0.84 + 0.6 * wall.label.length), lengthSize * (0.62 * length.length + 0.9));
+    const fit = Math.max(0.6, Math.min(1, span / fullWidth));
+    const letterSize = labelSize * fit;
+    const lengthFont = lengthSize * fit;
+    const width = fullWidth * fit;
+    const height = letterSize * 1.24 + (length ? lengthFont * 1.25 : 0);
+    const outward = { x: (wall.to.y - wall.from.y) / span, y: -(wall.to.x - wall.from.x) / span };
+    const offset = Math.abs(outward.x) * width / 2 + Math.abs(outward.y) * height / 2 + letterSize * 0.3;
+    return { wall, length, width, height, letterSize, lengthFont, at: { x: wall.middle.x + outward.x * offset, y: wall.middle.y + outward.y * offset } };
+  });
+
+  // The marked doorway, snapped to the nearest traced wall and drawn at its real width along that wall.
+  const doorView = useMemo(() => {
+    if (!doorPoint || !scale || !walls.length) return null;
+    const nearest = walls
+      .map((wall) => ({ wall, ...closestPointOnSegment(doorPoint, wall.from, wall.to) }))
+      .sort((a, b) => a.distance - b.distance)[0];
+    const { wall } = nearest;
+    const span = Math.hypot(wall.to.x - wall.from.x, wall.to.y - wall.from.y) || 1;
+    const meters = wallMeters(wall, scale);
+    const widthMeters = Math.min(doorWidth, meters);
+    const half = (widthMeters / meters) * span / 2;
+    const along = Math.max(half, Math.min(span - half, nearest.t * span));
+    const direction = { x: (wall.to.x - wall.from.x) / span, y: (wall.to.y - wall.from.y) / span };
+    const center = { x: wall.from.x + direction.x * along, y: wall.from.y + direction.y * along };
+    const inward = { x: -direction.y, y: direction.x };
+    return {
+      wall,
+      widthMeters,
+      from: { x: center.x - direction.x * half, y: center.y - direction.y * half },
+      to: { x: center.x + direction.x * half, y: center.y + direction.y * half },
+      labelAt: { x: center.x + inward.x * labelSize * 1.1, y: center.y + inward.y * labelSize * 1.1 },
+    };
+  }, [doorPoint, doorWidth, labelSize, scale, walls]);
+
+  // Sealing closes gaps up to twice the seal radius; shown in real units once the plan has a scale.
+  const sealRadius = plan ? Math.round(doorways * Math.max(plan.raster.width, plan.raster.height) * 0.005) : 0;
+  const sealGap = scale && sealRadius ? units.formatLength(sealRadius * 2 * (scale.x + scale.y) / 2, "object") : null;
 
   // A reading names walls by the letters it was shown; follow those walls if the trace has changed since.
   const labelFor = (label: string | null) => {
@@ -235,6 +295,8 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
       setPlan(loaded);
       setSeed(null);
       setDoorways(0);
+      setDoorPoint(null);
+      setMarkingDoor(false);
       setTrace(null);
       setMeasurements([]);
       setOverall({});
@@ -248,7 +310,13 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
 
   const tap = (event: React.MouseEvent<SVGSVGElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
-    setSeed({ x: ((event.clientX - rect.left) / rect.width) * size.width, y: ((event.clientY - rect.top) / rect.height) * size.height });
+    const point = { x: ((event.clientX - rect.left) / rect.width) * size.width, y: ((event.clientY - rect.top) / rect.height) * size.height };
+    if (markingDoor) {
+      setDoorPoint(point);
+      setMarkingDoor(false);
+    } else {
+      setSeed(point);
+    }
   };
 
   const nextRoom = () => {
@@ -302,6 +370,7 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
       measured: scale.measured,
       note: scale.measured ? `Scaled from ${sources.join(" and ")} on floor plan ${plan.name}` : `Proportions traced from floor plan ${plan.name}; size estimated, not measured`,
       features: planOpeningFeatures(openings, trace, size, scale, shape),
+      doorway: doorPoint ? planDoorway(doorPoint, doorWidth, trace, size, scale, shape) : null,
     });
   };
 
@@ -329,6 +398,7 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
               <li><b>01</b><span><strong>Tap your room</strong><small>The outline follows its walls, skipping labels and door swings.</small></span></li>
               <li><b>02</b><span><strong>Check the shape</strong><small>Adjust detail and colour match until the walls line up.</small></span></li>
               <li><b>03</b><span><strong>Enter one wall you know</strong><small>Every other wall scales from it. Without one, the size is an estimate.</small></span></li>
+              <li><b>04</b><span><strong>Mark your doorway</strong><small>Click the wall your door is on. It becomes a confirmed door with a keep-clear area for its swing.</small></span></li>
             </ol>
             {loadError && <div className="warning-note"><AlertTriangle size={16} /> {loadError}</div>}
           </div>
@@ -338,27 +408,44 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
               {/* Sized to the plan's exact proportions (and at most 62% of the screen height), so the overlay lines up with the image. */}
               <div className="plan-figure" style={{ aspectRatio: `${size.width} / ${size.height}`, width: `min(100%, calc(62dvh * ${size.width / size.height}))` }}>
                 <img src={plan.url} alt={`Floor plan ${plan.name}`} />
-                <svg viewBox={`0 0 ${size.width} ${size.height}`} preserveAspectRatio="none" onClick={tap} aria-label="Traced outline over the plan. Click inside another room to trace it instead.">
+                <svg
+                  className={markingDoor ? "marking-door" : undefined}
+                  viewBox={`0 0 ${size.width} ${size.height}`}
+                  preserveAspectRatio="none"
+                  onClick={tap}
+                  aria-label={markingDoor ? "Click the wall your door is on." : "Traced outline over the plan. Click inside another room to trace it instead."}
+                >
                   {trace && <polygon className="plan-trace" points={trace.overlay.map((point) => `${point.x},${point.y}`).join(" ")} />}
-                  {walls.map((wall) => (
-                    <g key={wall.label} className={`plan-wall-tag${wallMeasurements[wall.index] ? " measured" : ""}`} transform={`translate(${wall.labelAt.x} ${wall.labelAt.y})`}>
-                      <rect x={-labelSize * (0.42 + 0.3 * wall.label.length)} y={-labelSize * 0.62} width={labelSize * (0.84 + 0.6 * wall.label.length)} height={labelSize * 1.24} rx={labelSize * 0.16} />
-                      <text fontSize={labelSize} dy="0.35em">{wall.label}</text>
+                  {wallTags.map(({ wall, length, width, height, letterSize, lengthFont, at }) => (
+                    <g key={wall.label} className={`plan-wall-tag${wallMeasurements[wall.index] ? " measured" : ""}`} transform={`translate(${at.x} ${at.y})`}>
+                      <title>{`Wall ${wall.label}${length ? `: ${length}${wallMeasurements[wall.index] ? " (measured)" : ""}` : ""}`}</title>
+                      <rect x={-width / 2} y={-height / 2} width={width} height={height} rx={letterSize * 0.16} />
+                      <text fontSize={letterSize} y={-height / 2 + letterSize * 0.62} dy="0.35em">{wall.label}</text>
+                      {length && <text className="plan-wall-length" fontSize={lengthFont} y={height / 2 - lengthFont * 0.75} dy="0.35em">{length}</text>}
                     </g>
                   ))}
+                  {doorView && <g className="plan-door">
+                    <line x1={doorView.from.x} y1={doorView.from.y} x2={doorView.to.x} y2={doorView.to.y} />
+                    <text x={doorView.labelAt.x} y={doorView.labelAt.y} fontSize={lengthSize} dy="0.35em">Door</text>
+                  </g>}
                   {seed && <g className="plan-seed" transform={`translate(${seed.x} ${seed.y})`}><circle r={labelSize * 0.28} /><path d={`M${-labelSize * 0.6} 0H${labelSize * 0.6}M0 ${-labelSize * 0.6}V${labelSize * 0.6}`} /></g>}
                 </svg>
                 {tracing && <span className="plan-status"><LoaderCircle className="spin" size={14} /> Tracing…</span>}
               </div>
-              <p className="plan-hint"><MousePointerClick size={14} /> Click or tap inside your room on the plan to trace it.{plan.seeds.length > 1 && <> <button className="text-button" onClick={nextRoom}>Try another room</button></>}</p>
-              <div className="plan-controls">
+              {markingDoor
+                ? <p className="plan-hint marking"><DoorOpen size={14} /> Click the wall your door is on. It snaps to the nearest traced wall. <button className="text-button" onClick={() => setMarkingDoor(false)}>Cancel</button></p>
+                : <p className="plan-hint"><MousePointerClick size={14} /> Click or tap inside your room on the plan to trace it.{plan.seeds.length > 1 && <> <button className="text-button" onClick={nextRoom}>Try another room</button></>}</p>}              <div className="plan-controls">
                 <div className="plan-detail" role="group" aria-label="Trace detail">
                   {(["simple", "balanced", "detailed"] as const).map((option) => <button key={option} type="button" aria-pressed={detail === option} onClick={() => setDetail(option)}>{option[0].toUpperCase() + option.slice(1)}</button>)}
                 </div>
                 <label className="snap-toggle"><input type="checkbox" checked={straighten} onChange={(event) => setStraighten(event.target.checked)} /><span>Square corners</span></label>
                 <label className="plan-tolerance"><span>Colour match</span><input type="range" min={12} max={96} step={2} value={tolerance} onChange={(event) => setTolerance(Number(event.target.value))} aria-valuetext={`${tolerance} of 96`} /></label>
-                <label className="plan-tolerance" title="Raise this if the outline spills through a doorway into the next room or hall"><span>Seal doorways</span><input type="range" min={0} max={10} step={1} value={doorways} onChange={(event) => setDoorways(Number(event.target.value))} aria-valuetext={doorways ? `${doorways} of 10` : "off"} /></label>
+                <label className="plan-tolerance" title="Raise this if the outline spills through a doorway into the next room or hall"><span>Seal doorways</span><input type="range" min={0} max={10} step={1} value={doorways} onChange={(event) => setDoorways(Number(event.target.value))} aria-valuetext={doorways ? `${doorways} of 10` : "off"} aria-describedby="plan-seal-help" /></label>
               </div>
+              <p className="plan-help" id="plan-seal-help">
+                <strong>Seal doorways.</strong> Floor plans usually draw a doorway as a gap in the wall, so the traced outline can leak through it into the hall or the next room. Sealing closes those gaps while tracing, as if the doors were shut, so the outline stops at the wall. It only changes the traced outline. It doesn&rsquo;t add or remove doors; mark your actual door below. Leave it off unless the outline spills out of your room.
+                {" "}{doorways ? (sealGap ? `Now sealing gaps up to about ${sealGap} wide.` : "Sealing is on.") : "Off."}
+              </p>
               {!tracing && !trace && <div className="warning-note"><AlertTriangle size={16} /> No room found there. Click inside a room on the plan, or loosen the colour match.</div>}
               {!tracing && trace?.touchesEdge && <div className="warning-note"><AlertTriangle size={16} /> The outline runs to the edge of the image, so it may have spilled past your room. Click inside the room, tighten the colour match, or seal doorways.</div>}
             </div>
@@ -385,6 +472,20 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
                     <span role="cell" className="unit-input"><LengthInput aria-label={`Measured length of wall ${wall.label} (${units.roomUnit})`} placeholder="—" min={0} step={units.roomUnit === "ft" ? 0.25 : 0.01} unit={units.roomUnit} meters={wallMeasurements[wall.index] ?? null} onChange={(meters) => measure(wall, meters)} /></span>
                   </div>
                 ))}
+              </div>
+
+              <div className="plan-doorway">
+                <div className="plan-doorway-head"><DoorOpen size={16} /><strong>Doorway</strong>{doorView && <span className="source-chip confirmed"><Check size={12} /> marked</span>}</div>
+                <p>{doorView
+                  ? <>Door on wall <b>{doorView.wall.label}</b>, {units.formatLength(doorView.widthMeters, "object")} wide. It&rsquo;s added as a confirmed door, with a keep-clear area for its swing so furniture isn&rsquo;t placed in the way.</>
+                  : "Mark where your room's door is. Furniture is then kept out of its swing in the 3D Studio and by Better Cart."}</p>
+                <div className="plan-doorway-actions">
+                  <button type="button" className={markingDoor ? "primary-button" : "secondary-button"} aria-pressed={markingDoor} disabled={!trace || tracing} onClick={() => setMarkingDoor((current) => !current)}>
+                    <DoorOpen size={15} /> {markingDoor ? "Click a wall on the plan…" : doorPoint ? "Move doorway" : "Mark doorway"}
+                  </button>
+                  {doorPoint && <button type="button" className="text-button" onClick={() => { setDoorPoint(null); setMarkingDoor(false); }}>Remove</button>}
+                </div>
+                <label className="plan-door-width"><span>Door width</span><span className="unit-input"><LengthInput aria-label={`Door width (${units.objectUnit})`} min={0} step={1} unit={units.objectUnit} meters={doorWidth} onChange={(meters) => { if (meters != null && meters > 0) setDoorWidth(meters); }} /><b>{units.objectUnit}</b></span></label>
               </div>
 
               <div className="plan-read">

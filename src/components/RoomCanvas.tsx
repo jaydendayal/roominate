@@ -25,6 +25,8 @@ interface RoomCanvasProps {
   cutaway?: boolean;
   viewCommand?: { type: "reset" | "overhead"; nonce: number };
   compact?: boolean;
+  /** Filled with a function returning the floor direction (unit X/Y) that points right on screen for the current camera. */
+  screenRightRef?: React.MutableRefObject<(() => Vec2) | null>;
 }
 
 const MIN_VIEW_DISTANCE = 2;
@@ -604,7 +606,21 @@ interface DragPreview {
   rotationZ: number;
 }
 
-function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, gridSize, snapToGrid, moveStep }: RoomCanvasProps & { gridSize: number; snapToGrid: boolean; moveStep: number | null }) {
+/** Lets the page ask which floor direction points right on screen, so arrow keys follow the current view. */
+function ScreenRightReporter({ screenRightRef }: { screenRightRef: NonNullable<RoomCanvasProps["screenRightRef"]> }) {
+  const camera = useThree((state) => state.camera);
+  useEffect(() => {
+    screenRightRef.current = () => {
+      const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+      const length = Math.hypot(right.x, right.y);
+      return length > 1e-6 ? { x: right.x / length, y: right.y / length } : { x: 1, y: 0 };
+    };
+    return () => { screenRightRef.current = null; };
+  }, [camera, screenRightRef]);
+  return null;
+}
+
+function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, screenRightRef, gridSize, snapToGrid, moveStep }: RoomCanvasProps & { gridSize: number; snapToGrid: boolean; moveStep: number | null }) {
   const controls = useRef<OrbitControlsImpl | null>(null);
   const [dragging, setDragging] = useState(false);
   // While dragging, render a local preview (with live conflict colors) and save only on release.
@@ -678,6 +694,7 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
       <ambientLight intensity={1.8} />
       <directionalLight position={[2, 5, 7]} intensity={2.5} castShadow shadow-mapSize={[1024, 1024]} />
       <CameraRig project={project} command={viewCommand} cutaway={cutaway} controlsRef={controls} />
+      {screenRightRef && <ScreenRightReporter screenRightRef={screenRightRef} />}
       <OrbitControls ref={controls} enabled={!dragging} makeDefault target={center} minDistance={MIN_VIEW_DISTANCE} maxDistance={MAX_VIEW_DISTANCE} maxPolarAngle={Math.PI / 2.02} />
       <RoomShell room={project.room} cutaway={cutaway} floorColor={floorColor} wallColor={wallColor} onFloorPointerDown={() => onSelectItem?.("")} />
       <FloorGrid room={project.room} cell={gridSize} />

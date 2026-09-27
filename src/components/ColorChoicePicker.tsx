@@ -57,12 +57,13 @@ function SwatchSelect({ options, value, onChange, label }: { options: SwatchOpti
 
   useEffect(() => {
     if (!open) return;
+    // Resize events target the window, which isn't a Node, so check before asking contains().
+    const inside = (target: EventTarget | null, element: HTMLElement | null) => target instanceof Node && Boolean(element?.contains(target));
     const close = (event: Event) => {
-      const target = event.target as Node;
-      if (listRef.current?.contains(target) || buttonRef.current?.contains(target)) return;
+      if (inside(event.target, listRef.current) || inside(event.target, buttonRef.current)) return;
       setOpen(false);
     };
-    const dismiss = (event: Event) => { if (!listRef.current?.contains(event.target as Node)) setOpen(false); };
+    const dismiss = (event: Event) => { if (!inside(event.target, listRef.current)) setOpen(false); };
     document.addEventListener("pointerdown", close);
     window.addEventListener("resize", dismiss);
     window.addEventListener("scroll", dismiss, true);
