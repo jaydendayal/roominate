@@ -1,3 +1,4 @@
+import { isRoomBedItem, syncBeds } from "./beds";
 import type { Item, Project } from "./types";
 
 // Undo/redo for edits made in the 3D Studio. Each entry records only the item fields the edit
@@ -17,6 +18,8 @@ export interface ItemEdit {
   at: number;
   /** Came from a typed value, so further keystrokes may fold into it. */
   typed?: boolean;
+  /** Set when the edit removed the item: the item as it was and its place in the list, so undo can put it back. */
+  removed?: { item: Item; index: number };
 }
 
 export interface ItemHistory {
@@ -80,15 +83,52 @@ export function recordEdit(history: ItemHistory, project: Project, itemId: strin
   return { past: past.slice(-HISTORY_LIMIT), future: [] };
 }
 
+const withItems = (project: Project, items: Item[], wasBed: boolean): Project => wasBed
+  // Room beds keep the room's bed setting and bed products in step with the bed items.
+  ? syncBeds(project, items)
+  : { ...project, items, cartVersion: project.cartVersion + 1, proposal: project.proposal ? { ...project.proposal, stale: true } : null };
+
+/** Takes an item out of the project entirely: out of the room, the list, and the cart. */
+export function removeItem(project: Project, itemId: string): Project {
+  const item = project.items.find((candidate) => candidate.id === itemId);
+  if (!item) return project;
+  return withItems(project, project.items.filter((candidate) => candidate.id !== itemId), isRoomBedItem(item));
+}
+
+/** Puts a removed item back where it was in the list. */
+function restoreItem(project: Project, removed: NonNullable<ItemEdit["removed"]>): Project {
+  const items = [...project.items];
+  items.splice(Math.min(removed.index, items.length), 0, removed.item);
+  return withItems(project, items, isRoomBedItem(removed.item));
+}
+
+/** Records removing an item, about to be applied to `project`, as one undo step. */
+export function recordRemoval(history: ItemHistory, project: Project, itemId: string, now = Date.now()): ItemHistory {
+  const index = project.items.findIndex((candidate) => candidate.id === itemId);
+  if (index < 0) return history;
+  const past = [...history.past, { itemId, label: "Remove", before: {}, after: {}, at: now, removed: { item: project.items[index], index } }];
+  return { past: past.slice(-HISTORY_LIMIT), future: [] };
+}
+
+/**
+ * Whether an entry can be applied now. Edits need their item in the project (entries for items removed
+ * outside the Studio are skipped); undoing a removal needs it gone, and redoing one needs it back.
+ */
+function applicable(edit: ItemEdit, project: Project, direction: "undo" | "redo") {
+  const present = project.items.some((item) => item.id === edit.itemId);
+  return edit.removed && direction === "undo" ? !present : present;
+}
+
 function step(history: ItemHistory, project: Project, direction: "undo" | "redo"): { history: ItemHistory; project: Project } | null {
   const from = direction === "undo" ? [...history.past] : [...history.future];
   const to = direction === "undo" ? [...history.future] : [...history.past];
-  // Skip entries whose item has since been removed from the project.
   while (from.length) {
     const edit = from.pop()!;
-    if (!project.items.some((item) => item.id === edit.itemId)) continue;
+    if (!applicable(edit, project, direction)) continue;
     to.push({ ...edit, typed: false }); // never fold new typing into an edit that was undone or redone
-    const next = applyItemPatch(project, edit.itemId, direction === "undo" ? edit.before : edit.after);
+    const next = edit.removed
+      ? (direction === "undo" ? restoreItem(project, edit.removed) : removeItem(project, edit.itemId))
+      : applyItemPatch(project, edit.itemId, direction === "undo" ? edit.before : edit.after);
     return { project: next, history: direction === "undo" ? { past: from, future: to } : { past: to, future: from } };
   }
   return null;
@@ -97,11 +137,11 @@ function step(history: ItemHistory, project: Project, direction: "undo" | "redo"
 export const undoEdit = (history: ItemHistory, project: Project) => step(history, project, "undo");
 export const redoEdit = (history: ItemHistory, project: Project) => step(history, project, "redo");
 
-/** The next entry undo or redo would apply, ignoring ones whose item is gone. */
+/** The next entry undo or redo would apply, skipping ones that no longer apply. */
 export function nextEdit(history: ItemHistory, project: Project, direction: "undo" | "redo"): ItemEdit | null {
   const entries = direction === "undo" ? history.past : history.future;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (project.items.some((item) => item.id === entries[index].itemId)) return entries[index];
+    if (applicable(entries[index], project, direction)) return entries[index];
   }
   return null;
 }

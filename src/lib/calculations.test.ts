@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isRoomBedItem } from "./beds";
 import { createBetterCartTestProject, createDemoProject } from "./demo";
-import { calculateIssues, collidingItemIds, itemBounds, itemExceedsRoom, physicalIssues, placementBlocked, productFor, purchaseSubtotal, restsOnSurface, settledElevation, stackedElevation } from "./calculations";
+import { calculateIssues, collidingItemIds, itemBounds, itemExceedsRoom, itemHasConflict, physicalIssues, placementBlocked, productFor, purchaseSubtotal, restsOnSurface, settledElevation, stackedElevation } from "./calculations";
 import { applyAcceptedProposal, generateProposal } from "./proposals";
 
 const item = (project: ReturnType<typeof createDemoProject>, id: string) => project.items.find((candidate) => candidate.id === id)!;
@@ -29,6 +29,20 @@ describe("Roominate deterministic engines", () => {
       expect(product.price, product.name).not.toBeNull();
     }
     expect(project.products.some((product) => product.sourceURL?.includes("example.com"))).toBe(false);
+  });
+
+  it("only counts placement problems as conflicts, so over-budget items keep their colors", () => {
+    const project = createDemoProject();
+    const issues = calculateIssues(project);
+    // The demo is over budget and its fridge breaks a confirmed rule, but nothing is badly placed.
+    expect(issues.some((issue) => issue.id === "budget-over" && issue.affectedItemIds.includes("item-desk"))).toBe(true);
+    expect(issues.some((issue) => issue.type === "rule" && issue.severity === "error" && issue.affectedItemIds.includes("item-fridge"))).toBe(true);
+    expect(itemHasConflict(issues, "item-desk")).toBe(false);
+    expect(itemHasConflict(issues, "item-fridge")).toBe(false);
+    // Pushing the chair into the desk is a real conflict.
+    const desk = item(project, "item-desk");
+    const overlapping = { ...project, items: project.items.map((candidate) => candidate.id === "item-chair" ? { ...candidate, transform: desk.transform } : candidate) };
+    expect(itemHasConflict(calculateIssues(overlapping), "item-chair")).toBe(true);
   });
 
   it("does not charge owned items", () => {

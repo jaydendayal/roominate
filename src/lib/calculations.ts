@@ -520,6 +520,13 @@ export function calculateIssues(project: Project, options: IssueOptions = {}): I
   return issues;
 }
 
+/** A confirmed placement problem (overlap, wall/floor/ceiling, keep-clear area): the kind the room views tint. */
+export const isPlacementConflict = (issue: Issue) => issue.severity === "error" && (issue.type === "fit" || issue.type === "clearance");
+
+/**
+ * Whether the item is in a confirmed placement conflict. Budget, rule, and duplicate issues are listed in
+ * Issues but don't recolor the item, so its model keeps its chosen colors while the cart is over budget.
+ */
 export function itemHasConflict(issues: Issue[], itemId: string) {
-  return issues.some((issue) => issue.severity === "error" && issue.affectedItemIds.includes(itemId));
+  return issues.some((issue) => isPlacementConflict(issue) && issue.affectedItemIds.includes(itemId));
 }
