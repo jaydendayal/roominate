@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BedDouble, Box, ChevronRight, Eye, Grid3X3, LoaderCircle, Lock, Maximize2, Move3D, PackagePlus, Redo2, RotateCw, ScanLine, ShoppingCart, Sparkles, Undo2, Unlock } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BedDouble, Box, ChevronRight, DoorOpen, Eye, Grid3X3, LoaderCircle, Lock, Maximize2, Move3D, PackagePlus, Plus, Redo2, RotateCw, ScanLine, ShoppingCart, Sparkles, Undo2, Unlock } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { MAX_BED_LOFT_METERS } from "@/lib/beds";
 import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/calculations";
 import { applyItemPatch, nextEdit, recordEdit, redoEdit, undoEdit, type ItemEdit, type ItemHistory, type ItemPatch } from "@/lib/itemHistory";
 import { arrowAxis, isArrowKey, verticalKey } from "@/lib/keyboardMoves";
 import { layoutResultMessage, recommendLayout } from "@/lib/layoutRecommendation";
+import { addDoorToRoom, moveDoorAlongPerimeter } from "@/lib/roomFeatures";
 import { snapItemPlacement } from "@/lib/snap";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
 import { ColorChoicePicker } from "../ColorChoicePicker";
@@ -33,12 +34,14 @@ export function StudioPanel({
   onOpenIssues: () => void;
 }) {
   const [selectedId, setSelectedId] = useState(project.items.find((item) => item.transform)?.id ?? null);
+  const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
   const [cutaway, setCutaway] = useState(true);
   const [viewCommand, setViewCommand] = useState<{ type: "reset" | "overhead"; nonce: number }>({ type: "reset", nonce: 0 });
   const [isMac, setIsMac] = useState(false);
   const [layoutMessage, setLayoutMessage] = useState("");
   const [optimizing, setOptimizing] = useState(false);
   const selected = project.items.find((item) => item.id === selectedId);
+  const selectedFeature = project.room.features.find((feature) => feature.id === selectedFeatureId && feature.kind === "door");
   const selectedProduct = selected ? productFor(project, selected) : null;
   const selectedIssues = issues.filter((issue) => selectedId && issue.affectedItemIds.includes(selectedId));
   const subtotal = purchaseSubtotal(project);
@@ -116,6 +119,26 @@ export function StudioPanel({
       ? Math.max(0, Math.min(MAX_BED_LOFT_METERS, meters))
       : meters;
     changeItem(selected.id, { transform: { ...transform, elevation } }, true);
+  };
+
+  const moveDoor = (featureId: string, position: Vec2) => update((current) => ({
+    ...current,
+    room: moveDoorAlongPerimeter(current.room, featureId, position),
+    cartVersion: current.cartVersion + 1,
+    proposal: current.proposal ? { ...current.proposal, stale: true } : null,
+  }));
+
+  const addDoor = () => {
+    if (viewOnly) return;
+    const id = `door-${crypto.randomUUID()}`;
+    update((current) => ({
+      ...current,
+      room: addDoorToRoom(current.room, id),
+      cartVersion: current.cartVersion + 1,
+      proposal: current.proposal ? { ...current.proposal, stale: true } : null,
+    }));
+    setSelectedId(null);
+    setSelectedFeatureId(id);
   };
 
   const generateOptimalLayout = async () => {
@@ -207,7 +230,7 @@ export function StudioPanel({
             const name = product?.name ?? "Unknown item";
             return (
               <div className={`room-item-row ${selectedId === item.id ? "selected" : ""}`} key={item.id}>
-                <button className="room-item-select" onClick={() => setSelectedId(item.id)}>
+                <button className="room-item-select" onClick={() => { setSelectedId(item.id); setSelectedFeatureId(null); }}>
                   <span className="object-thumb" style={{ background: tone.fill, color: tone.mark }}><Box size={18} /></span>
                   <span className="item-row-copy"><strong>{name}</strong><small>{owner?.name} · {item.transform ? "placed" : "fit unverified"}{item.locked ? " · locked" : ""}</small></span>
                   {hasIssue && <AlertTriangle size={16} className="warn-text" />}
@@ -225,8 +248,19 @@ export function StudioPanel({
               </div>
             );
           })}
+          {project.room.features.filter((feature) => feature.kind === "door").map((feature) => (
+            <div className={`room-item-row ${selectedFeatureId === feature.id ? "selected" : ""}`} key={feature.id}>
+              <button className="room-item-select" onClick={() => { setSelectedFeatureId(feature.id); setSelectedId(null); }}>
+                <span className="object-thumb room-feature-thumb"><DoorOpen size={18} /></span>
+                <span className="item-row-copy"><strong>{feature.name}</strong><small>Room feature · drag along perimeter</small></span>
+              </button>
+            </div>
+          ))}
         </div>
-        <button className="secondary-button full" onClick={onOpenProducts}><PackagePlus size={16} /> Add or import item</button>
+        <div className="studio-add-actions">
+          <button className="secondary-button full" onClick={onOpenProducts}><PackagePlus size={16} /> Add or import item</button>
+          <button className="secondary-button full" disabled={viewOnly} onClick={addDoor}><Plus size={16} /> Add door</button>
+        </div>
       </section>
 
       <section className="viewport-card">
@@ -262,16 +296,19 @@ export function StudioPanel({
           project={project}
           issues={issues}
           selectedItemId={selectedId}
-          onSelectItem={(id) => setSelectedId(id || null)}
+          selectedFeatureId={selectedFeatureId}
+          onSelectItem={(id) => { setSelectedId(id || null); if (id) setSelectedFeatureId(null); }}
+          onSelectFeature={(id) => { setSelectedFeatureId(id || null); if (id) setSelectedId(null); }}
           onMoveItem={(itemId, position, elevation, rotationZ) => {
             const item = project.items.find((candidate) => candidate.id === itemId);
             if (item?.transform) changeItem(itemId, { transform: { ...item.transform, position, elevation, rotationZ } });
           }}
+          onMoveFeature={viewOnly ? undefined : moveDoor}
           cutaway={cutaway}
           viewCommand={viewCommand}
           screenRightRef={screenRightRef}
         />
-        <div className="viewport-legend"><span><i className="legend-finish" /> Chosen product colors</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag to move · purple ring rotates · blue arrow lifts · arrow keys move · + / − raise and lower</span></div>
+        <div className="viewport-legend"><span><i className="legend-finish" /> Chosen product colors</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag furniture to move · drag a door along the perimeter · purple ring rotates · blue arrow lifts</span></div>
       </section>
 
       <section className="studio-inspector panel-surface">
@@ -320,6 +357,15 @@ export function StudioPanel({
             </div>
             {selected.locked && <div className="info-note">Locked: dragging, lifting, typed positions, nudges, rotating, and unplacing are off for this item, and Better Cart won’t change it. Unlock it above to edit.</div>}
             {selectedIssues.length > 0 ? <div className="selected-issues">{selectedIssues.map((issue) => <button key={issue.id} onClick={onOpenIssues}><AlertTriangle size={16} /><span><strong>{issue.message}</strong><small>{issue.detail}</small></span><ChevronRight size={15} /></button>)}</div> : <div className="success-note"><span><Box size={16} /></span> No confirmed placement conflicts</div>}
+          </div>
+        ) : selectedFeature ? (
+          <div className="inspector-content door-inspector">
+            <p className="eyebrow">Selected room feature</p>
+            <h3>{selectedFeature.name}</h3>
+            <p className="muted-copy">{units.formatLength(selectedFeature.width, "object")} wide · {selectedFeature.wall && selectedFeature.wall !== "unknown" ? `${selectedFeature.wall} wall` : "room perimeter"}</p>
+            <div className="info-note"><DoorOpen size={16} /> Drag the door in the 3D room. It snaps to the nearest wall, stays fully on the perimeter, and brings its keep-clear swing area with it.</div>
+            {viewOnly && <div className="info-note">This shared room is view-only, so the door position cannot be changed.</div>}
+            <div className="success-note"><span><DoorOpen size={16} /></span> Door position is constrained to the room boundary</div>
           </div>
         ) : (
           <div className="empty-inspector"><ShoppingCart size={25} /><h3>Select an item</h3><p>Pick an object in the room or the list to inspect its dimensions and exact placement.</p></div>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isRoomBedItem } from "./beds";
 import { createDemoProject } from "./demo";
-import { calculateIssues, collidingItemIds, itemBounds, itemExceedsRoom, productFor, purchaseSubtotal, restsOnSurface, settledElevation, stackedElevation } from "./calculations";
+import { calculateIssues, collidingItemIds, itemBounds, itemExceedsRoom, itemHasConflict, productFor, purchaseSubtotal, restsOnSurface, settledElevation, stackedElevation } from "./calculations";
 import { applyAcceptedProposal, generateProposal } from "./proposals";
 
 const item = (project: ReturnType<typeof createDemoProject>, id: string) => project.items.find((candidate) => candidate.id === id)!;
@@ -17,6 +17,12 @@ describe("Roominate deterministic engines", () => {
     expect(types.has("budget")).toBe(true);
     expect(types.has("duplicate")).toBe(true);
     expect(types.has("rule")).toBe(true);
+  });
+
+  it("does not treat budget or policy notices as 3D placement conflicts", () => {
+    const issues = calculateIssues(createDemoProject());
+    expect(issues.some((issue) => issue.type === "budget" && issue.severity === "error")).toBe(true);
+    expect(itemHasConflict(issues, "item-desk")).toBe(false);
   });
 
   it("builds the demo only from real shortlist products", () => {

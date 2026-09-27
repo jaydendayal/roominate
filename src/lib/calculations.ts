@@ -497,5 +497,9 @@ export function calculateIssues(project: Project, options: IssueOptions = {}): I
 }
 
 export function itemHasConflict(issues: Issue[], itemId: string) {
-  return issues.some((issue) => issue.severity === "error" && issue.affectedItemIds.includes(itemId));
+  return issues.some((issue) =>
+    issue.severity === "error"
+    && (issue.type === "fit" || issue.type === "clearance")
+    && issue.affectedItemIds.includes(itemId),
+  );
 }

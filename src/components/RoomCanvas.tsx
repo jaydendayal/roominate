@@ -7,10 +7,11 @@ import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { LengthInput } from "./LengthInput";
-import { calculateIssues, collidingItemIds, featureWall, itemElevation, itemExceedsRoom, itemExceedsRoomBox, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
+import { calculateIssues, collidingItemIds, itemElevation, itemExceedsRoom, itemExceedsRoomBox, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
 import { visualProfileFor } from "@/lib/productModels";
 import { MAX_BED_LOFT_METERS } from "@/lib/beds";
-import { floorGridSegments, roomPolygon, wallSegments } from "@/lib/roomShape";
+import { closestPointOnSegment, floorGridSegments, roomPolygon, wallSegments } from "@/lib/roomShape";
+import { moveDoorAlongPerimeter } from "@/lib/roomFeatures";
 import { normalizeRotation, snapItemPlacement, snapRotation, stepPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Room, RoomFeature, Vec2 } from "@/lib/types";
 import { gridOptions } from "@/lib/units";
@@ -21,8 +22,11 @@ interface RoomCanvasProps {
   project: Project;
   issues: Issue[];
   selectedItemId?: string | null;
+  selectedFeatureId?: string | null;
   onSelectItem?: (itemId: string) => void;
+  onSelectFeature?: (featureId: string) => void;
   onMoveItem?: (itemId: string, position: Vec2, elevation: number, rotationZ: number) => void;
+  onMoveFeature?: (featureId: string, position: Vec2) => void;
   cutaway?: boolean;
   viewCommand?: { type: "reset" | "overhead"; nonce: number };
   compact?: boolean;
@@ -350,7 +354,7 @@ function FurnitureItem({
   const exceedsRoom = itemExceedsRoomBox(project, item);
   // Wall/floor/ceiling violations are shown by the red out-of-room part, so they don't tint the whole item.
   const tintConflict = exceedsRoom
-    ? issues.some((issue) => issue.severity === "error" && issue.affectedItemIds.includes(item.id) && !issue.affectedGeometryIds.includes(project.room.id))
+    ? itemHasConflict(issues.filter((issue) => !issue.affectedGeometryIds.includes(project.room.id)), item.id)
     : conflict || itemExceedsRoom(project, item);
   const color = selected ? "#b7b5e4" : tintConflict ? CONFLICT_TINT : item.acquisitionStatus === "owned" ? "#aaa6b3" : personTone(project, item.ownerId).fill;
   // Shortlist products use their own model in the item's chosen finish; others use their imported profile.
@@ -522,12 +526,25 @@ function FurnitureItem({
   );
 }
 
-function RoomFeatureModel({ feature, project }: { feature: RoomFeature; project: Project }) {
-  const wall = featureWall(feature, project);
-  const turns = wall === "east" || wall === "west";
-  const size: [number, number, number] = turns
-    ? [feature.depth, feature.width, feature.height]
-    : [feature.width, feature.depth, feature.height];
+function RoomFeatureModel({ feature, project, selected, onSelect, onDrag, onDragEnd, setDragging }: {
+  feature: RoomFeature;
+  project: Project;
+  selected: boolean;
+  onSelect?: (id: string) => void;
+  onDrag?: (id: string, position: Vec2) => void;
+  onDragEnd?: (id: string, position: Vec2 | null) => void;
+  setDragging: (dragging: boolean) => void;
+}) {
+  const { camera, gl } = useThree();
+  const activePointer = useRef<number | null>(null);
+  const segment = useMemo(() => {
+    const walls = wallSegments(roomPolygon(project.room));
+    return walls
+      .map((candidate) => ({ candidate, ...closestPointOnSegment(feature.position, candidate.start, candidate.end) }))
+      .sort((a, b) => a.distance - b.distance)[0]?.candidate;
+  }, [feature.position, project.room]);
+  const rotation = segment ? Math.atan2(segment.end.y - segment.start.y, segment.end.x - segment.start.x) : 0;
+  const size: [number, number, number] = [feature.width, feature.depth, feature.height];
   const elevation = feature.elevation ?? (feature.kind === "window" ? 0.9 : 0);
   const opacity = feature.confirmed ? 0.92 : 0.58;
   const colors: Record<RoomFeature["kind"], string> = {
@@ -539,8 +556,51 @@ function RoomFeatureModel({ feature, project }: { feature: RoomFeature; project:
   };
   const color = colors[feature.kind];
 
-  return <group position={[feature.position.x, feature.position.y, elevation + feature.height / 2]}>
-    <mesh castShadow receiveShadow>
+  const startDrag = (event: ThreeEvent<PointerEvent>) => {
+    event.stopPropagation();
+    onSelect?.(feature.id);
+    if (feature.kind !== "door" || !onDragEnd) return;
+    const raycaster = new THREE.Raycaster();
+    // Follow a horizontal plane through the grabbed point so an angled camera does not make the door
+    // jump inward. The perimeter constraint is applied after preserving the exact grab offset.
+    const dragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -event.point.z);
+    const intersection = new THREE.Vector3();
+    const planePoint = (clientX: number, clientY: number): Vec2 | null => {
+      const rect = gl.domElement.getBoundingClientRect();
+      raycaster.setFromCamera(new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1), camera);
+      return raycaster.ray.intersectPlane(dragPlane, intersection) ? { x: intersection.x, y: intersection.y } : null;
+    };
+    const grab = planePoint(event.nativeEvent.clientX, event.nativeEvent.clientY);
+    if (!grab) return;
+    const start = { ...feature.position };
+    let last: Vec2 | null = null;
+    activePointer.current = event.pointerId;
+    setDragging(true);
+    const move = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== activePointer.current) return;
+      const point = planePoint(pointerEvent.clientX, pointerEvent.clientY);
+      if (!point) return;
+      last = { x: start.x + point.x - grab.x, y: start.y + point.y - grab.y };
+      onDrag?.(feature.id, last);
+    };
+    const finish = (pointerEvent: PointerEvent, commit: boolean) => {
+      if (pointerEvent.pointerId !== activePointer.current) return;
+      activePointer.current = null;
+      setDragging(false);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", cancel);
+      onDragEnd(feature.id, commit ? last : null);
+    };
+    const release = (pointerEvent: PointerEvent) => finish(pointerEvent, true);
+    const cancel = (pointerEvent: PointerEvent) => finish(pointerEvent, false);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", cancel);
+  };
+
+  return <group position={[feature.position.x, feature.position.y, elevation + feature.height / 2]} rotation={[0, 0, rotation]}>
+    <mesh castShadow receiveShadow onPointerDown={startDrag}>
       <boxGeometry args={size} />
       {feature.kind === "window"
         ? <meshPhysicalMaterial color={color} transparent opacity={opacity * 0.7} roughness={0.12} metalness={0.18} />
@@ -548,15 +608,15 @@ function RoomFeatureModel({ feature, project }: { feature: RoomFeature; project:
     </mesh>
     <lineSegments>
       <edgesGeometry args={[new THREE.BoxGeometry(...size)]} />
-      <lineBasicMaterial color={feature.confirmed ? "#322e18" : "#a3402f"} transparent opacity={0.88} />
+      <lineBasicMaterial color={selected ? "#8179d6" : feature.confirmed ? "#322e18" : "#a3402f"} transparent opacity={selected ? 1 : 0.88} />
     </lineSegments>
-    {feature.kind === "door" && <mesh position={turns ? [0, feature.width * 0.34, 0] : [feature.width * 0.34, 0, 0]}>
+    {feature.kind === "door" && <mesh position={[feature.width * 0.34, 0, 0]}>
       <sphereGeometry args={[0.045, 12, 8]} />
       <meshStandardMaterial color="#322e18" metalness={0.4} roughness={0.35} />
     </mesh>}
     <Billboard position={[0, 0, feature.height / 2 + 0.13]}>
       <Text fontSize={0.1} color={feature.confirmed ? "#322e18" : "#a3402f"} outlineColor="#f4f3f7" outlineWidth={0.009} anchorX="center">
-        {feature.confirmed ? feature.name : `? ${feature.name}`}
+        {selected && feature.kind === "door" ? `↔ ${feature.name} · drag along wall` : feature.confirmed ? feature.name : `? ${feature.name}`}
       </Text>
     </Billboard>
   </group>;
@@ -630,17 +690,21 @@ function ScreenRightReporter({ screenRightRef }: { screenRightRef: NonNullable<R
   return null;
 }
 
-function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, screenRightRef, gridSize, snapToGrid, snapToFurniture, moveStep }: RoomCanvasProps & { gridSize: number; snapToGrid: boolean; snapToFurniture: boolean; moveStep: number | null }) {
+function Scene({ project: savedProject, issues: savedIssues, selectedItemId, selectedFeatureId, onSelectItem, onSelectFeature, onMoveItem, onMoveFeature, cutaway, viewCommand, screenRightRef, gridSize, snapToGrid, snapToFurniture, moveStep }: RoomCanvasProps & { gridSize: number; snapToGrid: boolean; snapToFurniture: boolean; moveStep: number | null }) {
   const controls = useRef<OrbitControlsImpl | null>(null);
   const [dragging, setDragging] = useState(false);
   // While dragging, render a local preview (with live conflict colors) and save only on release.
   const [preview, setPreview] = useState<DragPreview | null>(null);
+  const [featurePreview, setFeaturePreview] = useState<Room | null>(null);
   // The dragged item as last previewed. Drags settle step by step from it, so moving onto or off another item registers as it happens.
   const placed = useRef<Item | null>(null);
-  const project = useMemo(() => preview ? {
-    ...savedProject,
-    items: savedProject.items.map((item) => item.id === preview.itemId && item.transform ? { ...item, transform: { ...item.transform, position: preview.position, elevation: preview.elevation, rotationZ: preview.rotationZ } } : item),
-  } : savedProject, [preview, savedProject]);
+  const project = useMemo(() => {
+    const withItem = preview ? {
+      ...savedProject,
+      items: savedProject.items.map((item) => item.id === preview.itemId && item.transform ? { ...item, transform: { ...item.transform, position: preview.position, elevation: preview.elevation, rotationZ: preview.rotationZ } } : item),
+    } : savedProject;
+    return featurePreview ? { ...withItem, room: featurePreview } : withItem;
+  }, [featurePreview, preview, savedProject]);
   const issues = useMemo(() => (preview ? calculateIssues(project) : savedIssues), [preview, project, savedIssues]);
   const savedItem = (itemId: string) => savedProject.items.find((item) => item.id === itemId);
   // While dragging: whole steps only (if on). The saved position doesn't change mid-drag, so it is the step origin.
@@ -697,6 +761,11 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
     const position = snapItemPlacement(savedProject, itemId, transform.position, { grid: snapToGrid, furniture: snapToFurniture, cell: gridSize, rotationZ: finalRotation });
     onMoveItem?.(itemId, position, transform.elevation ?? 0, finalRotation);
   };
+  const dragFeature = (featureId: string, position: Vec2) => setFeaturePreview(moveDoorAlongPerimeter(savedProject.room, featureId, position));
+  const endFeatureDrag = (featureId: string, position: Vec2 | null) => {
+    setFeaturePreview(null);
+    if (position) onMoveFeature?.(featureId, position);
+  };
   const wallColor = tintedTone(WALL_TONE, project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex);
   const floorColor = tintedTone(FLOOR_TONE, project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("floor"))?.hex);
   const center = useMemo(() => new THREE.Vector3(project.room.width / 2, project.room.length / 2, 0.55), [project.room.length, project.room.width]);
@@ -711,9 +780,9 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
       <CameraRig project={project} command={viewCommand} cutaway={cutaway} controlsRef={controls} />
       {screenRightRef && <ScreenRightReporter screenRightRef={screenRightRef} />}
       <OrbitControls ref={controls} enabled={!dragging} makeDefault target={center} minDistance={MIN_VIEW_DISTANCE} maxDistance={MAX_VIEW_DISTANCE} maxPolarAngle={Math.PI / 2.02} />
-      <RoomShell room={project.room} cutaway={cutaway} floorColor={floorColor} wallColor={wallColor} onFloorPointerDown={() => onSelectItem?.("")} />
+      <RoomShell room={project.room} cutaway={cutaway} floorColor={floorColor} wallColor={wallColor} onFloorPointerDown={() => { onSelectItem?.(""); onSelectFeature?.(""); }} />
       <FloorGrid room={project.room} cell={gridSize} />
-      {project.room.features.map((feature) => <RoomFeatureModel key={feature.id} feature={feature} project={project} />)}
+      {project.room.features.map((feature) => <RoomFeatureModel key={feature.id} feature={feature} project={project} selected={selectedFeatureId === feature.id} onSelect={onSelectFeature} onDrag={onMoveFeature ? dragFeature : undefined} onDragEnd={onMoveFeature ? endFeatureDrag : undefined} setDragging={setDragging} />)}
       {project.room.clearanceZones.map((zone) => (
         <group key={zone.id} position={[zone.position.x, zone.position.y, 0.012]}>
           <mesh>

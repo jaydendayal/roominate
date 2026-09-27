@@ -46,6 +46,39 @@ test("desktop demo supports review, proposal decisions, apply, and undo", async 
   await expect(page.getByRole("heading", { name: "Choose what to apply" })).toBeVisible();
 });
 
+test("collapsed navigation labels its icons and checkout links to each product", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific checkout flow");
+  await page.getByRole("button", { name: "Open room" }).first().click();
+  await page.setViewportSize({ width: 900, height: 800 });
+
+  const productsTab = page.getByRole("button", { name: "Products", exact: true }).first();
+  await productsTab.hover();
+  await expect(productsTab.locator(".nav-tooltip")).toHaveText("Products");
+  await expect(productsTab.locator(".nav-tooltip")).toBeVisible();
+  await productsTab.click();
+
+  await page.getByRole("button", { name: /Group cart/ }).click();
+  await page.getByRole("button", { name: "Checkout by store" }).click();
+  await expect(page.getByRole("heading", { name: "Finish each order at its store." })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Visit store/ }).first()).toBeVisible();
+  const ikea = page.locator("article.checkout-store.ikea");
+  await expect(ikea.getByRole("link", { name: /View product/ }).first()).toHaveAttribute("href", /ikea\.com\/us\/en\/p\//);
+});
+
+test("3D Studio exposes the door as a perimeter-editable room feature", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific room feature flow");
+  await page.getByRole("button", { name: "Open room" }).first().click();
+  await page.getByRole("button", { name: /Entry door.*Room feature/ }).click();
+
+  await expect(page.getByText("Selected room feature")).toBeVisible();
+  await expect(page.getByText(/Drag the door in the 3D room/)).toBeVisible();
+  await expect(page.getByText(/Door position is constrained to the room boundary/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Add door" }).click();
+  await expect(page.getByRole("button", { name: /Door 2.*Room feature/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Door 2" })).toBeVisible();
+});
+
 test("AI layout generation selects a collision-tested whole-room candidate", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific layout flow");
   await page.route("**/api/v1/recommend-layout", (route) => {

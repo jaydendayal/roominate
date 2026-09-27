@@ -175,12 +175,13 @@ input, select { color: var(--ink); }
 .workspace-body { display: flex; min-height: calc(100vh - 68px); }
 .sidebar { width: 212px; flex: 0 0 212px; background: var(--ink); color: var(--pale-slate); padding: 18px 10px; display: flex; flex-direction: column; position: sticky; top: 68px; height: calc(100vh - 68px); z-index: 25; }
 .sidebar nav { display: grid; gap: 2px; }
-.sidebar nav button, .dashboard-link { min-height: 42px; border: 0; background: transparent; color: #bdb8c4; border-radius: var(--radius-sm); padding: 0 10px; display: flex; align-items: center; gap: 10px; text-align: left; font-size: 14px; font-weight: 550; }
+.sidebar nav button, .dashboard-link { min-height: 42px; border: 0; background: transparent; color: #bdb8c4; border-radius: var(--radius-sm); padding: 0 10px; display: flex; align-items: center; gap: 10px; text-align: left; font-size: 14px; font-weight: 550; position: relative; }
 .sidebar nav button:hover, .sidebar nav button.active, .dashboard-link:hover { color: var(--paper); background: rgba(207, 204, 214, .09); }
 .sidebar nav button.active { box-shadow: inset 2px 0 var(--lavender); }
 .nav-index { width: 18px; font: 400 10.5px var(--font-mono); font-style: normal; color: #9a94a2; }
 .sidebar nav button.active .nav-index { color: var(--lavender); }
-.sidebar nav button span { flex: 1; }
+.sidebar nav button .nav-label { flex: 1; }
+.nav-tooltip { display: none; }
 .sidebar nav button b { min-width: 22px; height: 18px; padding: 0 5px; display: grid; place-items: center; border-radius: 3px; font: 500 10.5px var(--font-mono); background: var(--lavender); color: var(--ink); }
 .sidebar-summary { margin-top: auto; margin-bottom: 8px; border-top: 1px solid rgba(207, 204, 214, .18); padding: 14px 8px 8px; }
 .sidebar-summary > div:first-child { display: flex; justify-content: space-between; align-items: baseline; font: 400 11px var(--font-mono); }
@@ -218,6 +219,8 @@ input, select { color: var(--ink); }
 .item-stack { display: grid; gap: 4px; overflow: auto; margin-bottom: 12px; }
 .room-item-row { width: 100%; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; padding: 7px 4px 7px 7px; display: flex; align-items: center; gap: 4px; text-align: left; }
 .room-item-select { flex: 1; min-width: 0; border: 0; background: transparent; padding: 0; display: flex; align-items: center; gap: 9px; text-align: left; }
+.room-feature-thumb { background: var(--info-soft); color: var(--info-ink); }
+.studio-add-actions { display: grid; gap: 7px; }
 .lock-button { width: 30px; height: 30px; color: var(--line-strong); }
 .lock-button.on { color: var(--ok-ink); background: var(--ok-soft); }
 /* Fixed height and single-line text so the toggle is the same size locked and unlocked. */
@@ -834,9 +837,11 @@ input, select { color: var(--ink); }
   .project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sidebar { width: 74px; flex-basis: 74px; }
   .sidebar nav button { justify-content: center; padding: 0; }
-  .sidebar nav button span, .nav-index, .sidebar-summary, .dashboard-link span { display: none; }
+  .sidebar .nav-label, .nav-index, .sidebar-summary { display: none; }
   .sidebar nav button b { position: absolute; margin: -24px 0 0 26px; }
   .dashboard-link { justify-content: center; }
+  .sidebar .nav-tooltip { display: block; position: absolute; left: calc(100% + 12px); top: 50%; z-index: 80; transform: translate(4px, -50%); padding: 7px 9px; border-radius: var(--radius-sm); background: var(--ink); color: var(--paper); font-size: 12px; font-weight: 650; line-height: 1; white-space: nowrap; box-shadow: 0 5px 18px rgba(28, 26, 14, .24); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .12s, transform .12s, visibility .12s; }
+  .sidebar nav button:hover .nav-tooltip, .sidebar nav button:focus-visible .nav-tooltip, .dashboard-link:hover .nav-tooltip, .dashboard-link:focus-visible .nav-tooltip { opacity: 1; visibility: visible; transform: translate(0, -50%); }
   .studio-layout { height: auto; min-height: calc(100vh - 68px); grid-template-columns: 1fr 260px; }
   .studio-products { display: none; }
   .viewport-card { min-height: calc(100vh - 92px); }
@@ -863,11 +868,12 @@ input, select { color: var(--ink); }
   .mobile-sidebar-head { align-items: center; justify-content: space-between; padding: 0 5px 16px 10px; color: var(--paper); font: 400 18px var(--font-display); }
   .mobile-sidebar-head .icon-button { color: var(--paper); }
   .sidebar nav button { justify-content: flex-start; padding: 0 10px; }
-  .sidebar nav button span, .nav-index { display: block; }
+  .sidebar .nav-label, .nav-index { display: block; }
+  .sidebar .nav-tooltip { display: none; }
   .sidebar nav button b { position: static; margin: 0; }
   .sidebar-summary { display: block; }
   .dashboard-link { justify-content: flex-start; }
-  .dashboard-link span { display: block; }
+  .dashboard-link .nav-label { display: block; }
   .mobile-tabs { position: fixed; display: grid; grid-template-columns: repeat(5, 1fr); z-index: 40; bottom: 0; left: 0; right: 0; height: 64px; background: var(--paper); border-top: 1px solid var(--ink); padding-bottom: env(safe-area-inset-bottom); }
   .mobile-tabs button { position: relative; border: 0; background: transparent; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 600; color: var(--muted); }
   .mobile-tabs button.active { color: var(--ink); box-shadow: inset 0 2px var(--ink); }
