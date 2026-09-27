@@ -6,8 +6,9 @@ import { Billboard, OrbitControls, Text } from "@react-three/drei";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
+import { DEFAULT_VIEW_DIRECTION, fitCameraTo, floorCorners, MAX_VIEW_DISTANCE, MIN_VIEW_DISTANCE, OVERHEAD_VIEW_DIRECTION, roomCorners } from "@/lib/cameraFit";
 import { LengthInput } from "./LengthInput";
-import { calculateIssues, collidingItemIds, featureWall, itemElevation, itemExceedsRoom, itemExceedsRoomBox, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
+import { calculateIssues, collidingItemIds, featureWall, isPlacementConflict, itemElevation, itemExceedsRoom, itemExceedsRoomBox, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
 import { visualProfileFor } from "@/lib/productModels";
 import { MAX_BED_LOFT_METERS } from "@/lib/beds";
 import { floorGridSegments, roomPolygon, wallSegments } from "@/lib/roomShape";
@@ -28,38 +29,10 @@ interface RoomCanvasProps {
   compact?: boolean;
   /** Filled with a function returning the floor direction (unit X/Y) that points right on screen for the current camera. */
   screenRightRef?: React.MutableRefObject<(() => Vec2) | null>;
+  /** A key shown in the canvas's bottom bar, beside the grid and units settings. */
+  legend?: React.ReactNode;
 }
 
-const MIN_VIEW_DISTANCE = 2;
-const MAX_VIEW_DISTANCE = 12;
-const VIEW_ELEVATION = THREE.MathUtils.degToRad(30);
-// +X is east and -Y is south, so the default view looks in diagonally over the south-east corner, the one the cutaway opens.
-const DEFAULT_VIEW_DIRECTION = new THREE.Vector3(Math.SQRT1_2 * Math.cos(VIEW_ELEVATION), -Math.SQRT1_2 * Math.cos(VIEW_ELEVATION), Math.sin(VIEW_ELEVATION));
-// Screen-space bounds the room must fit inside, in normalized device coordinates, clear of the toolbar above and the legends below.
-const VIEW_SAFE_AREA = { x: 0.88, bottom: -0.74, top: 0.82 };
-
-/** Backs the camera out from `target` along `direction` until every point is on screen inside the safe area. */
-function fitCameraTo(camera: THREE.PerspectiveCamera, target: THREE.Vector3, direction: THREE.Vector3, points: THREE.Vector3[]) {
-  const projected = new THREE.Vector3();
-  const fits = (distance: number) => {
-    camera.position.copy(target).addScaledVector(direction, distance);
-    camera.lookAt(target);
-    camera.updateMatrixWorld();
-    return points.every((point) => {
-      projected.copy(point).project(camera);
-      // z beyond 1 means the point is behind the camera, where x and y are meaningless.
-      return projected.z < 1 && Math.abs(projected.x) <= VIEW_SAFE_AREA.x && projected.y >= VIEW_SAFE_AREA.bottom && projected.y <= VIEW_SAFE_AREA.top;
-    });
-  };
-  let near = MIN_VIEW_DISTANCE;
-  let far = MAX_VIEW_DISTANCE;
-  for (let step = 0; step < 20; step += 1) {
-    const middle = (near + far) / 2;
-    if (fits(middle)) far = middle;
-    else near = middle;
-  }
-  fits(far);
-}
 
 function CameraRig({ project, command, cutaway, controlsRef }: { project: Project; command?: RoomCanvasProps["viewCommand"]; cutaway?: boolean; controlsRef: React.RefObject<OrbitControlsImpl | null> }) {
   const camera = useThree((state) => state.camera);
@@ -80,12 +53,17 @@ function CameraRig({ project, command, cutaway, controlsRef }: { project: Projec
     camera.up.set(0, 0, 1);
     const { width, length, height } = project.room;
     const center = new THREE.Vector3(width / 2, length / 2, 0.6);
+    const corners = roomCorners(width, length, height);
     if (command?.type === "overhead") {
-      camera.position.set(width / 2, length / 2 + 0.001, Math.max(5.5, length * 1.8));
-      camera.lookAt(center);
+      if (camera instanceof THREE.PerspectiveCamera) {
+        // Straight down, as close as fits the whole floor inside the safe area, with north at the top.
+        fitCameraTo(camera, center, OVERHEAD_VIEW_DIRECTION, floorCorners(width, length));
+      } else {
+        camera.position.set(width / 2, length / 2 + 0.001, Math.max(5.5, length * 1.8));
+        camera.lookAt(center);
+      }
     } else if (camera instanceof THREE.PerspectiveCamera) {
       // Frame the floor and the top of every wall that's drawn; the cutaway leaves the near top corner empty.
-      const corners = [[0, 0], [width, 0], [0, length], [width, length]].flatMap(([x, y]) => [new THREE.Vector3(x, y, 0), new THREE.Vector3(x, y, height)]);
       fitCameraTo(camera, center, DEFAULT_VIEW_DIRECTION, cutawayNow.current ? corners.filter((corner) => !(corner.x === width && corner.y === 0 && corner.z === height)) : corners);
     }
     if (controls) {
@@ -350,7 +328,7 @@ function FurnitureItem({
   const exceedsRoom = itemExceedsRoomBox(project, item);
   // Wall/floor/ceiling violations are shown by the red out-of-room part, so they don't tint the whole item.
   const tintConflict = exceedsRoom
-    ? issues.some((issue) => issue.severity === "error" && issue.affectedItemIds.includes(item.id) && !issue.affectedGeometryIds.includes(project.room.id))
+    ? issues.some((issue) => isPlacementConflict(issue) && issue.affectedItemIds.includes(item.id) && !issue.affectedGeometryIds.includes(project.room.id))
     : conflict || itemExceedsRoom(project, item);
   const color = selected ? "#b7b5e4" : tintConflict ? CONFLICT_TINT : item.acquisitionStatus === "owned" ? "#aaa6b3" : personTone(project, item.ownerId).fill;
   // Shortlist products use their own model in the item's chosen finish; others use their imported profile.
@@ -482,7 +460,8 @@ function FurnitureItem({
     <group position={[position.x, position.y, elevation + itemHeight / 2]} rotation={[0, 0, rotationZ]}>
       <group rotation={[Math.PI / 2, 0, 0]}>
         <group onPointerDown={startDrag}>
-          <FurnitureModel {...modelProps} color={color} opacity={tintConflict ? 0.82 : 1} emphasized={selected || tintConflict} clipping={exceedsRoom ? { planes: clipPlanes.inside } : undefined} />
+          {/* Selection is shown by the outline box, label, and handles, so a selected item keeps its chosen colors; only a placement conflict tints the model. */}
+          <FurnitureModel {...modelProps} color={color} opacity={tintConflict ? 0.82 : 1} emphasized={tintConflict} clipping={exceedsRoom ? { planes: clipPlanes.inside } : undefined} />
         </group>
         {exceedsRoom && (
           <>
@@ -705,7 +684,6 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
   return (
     <>
       <color attach="background" args={["#dcdae2"]} />
-      <fog attach="fog" args={["#dcdae2", 8, 16]} />
       <ambientLight intensity={1.8} />
       <directionalLight position={[2, 5, 7]} intensity={2.5} castShadow shadow-mapSize={[1024, 1024]} />
       <CameraRig project={project} command={viewCommand} cutaway={cutaway} controlsRef={controls} />
@@ -761,7 +739,11 @@ export function RoomCanvas(props: RoomCanvasProps) {
       >
         <Scene {...props} gridSize={gridSize} snapToGrid={snapToGrid} snapToFurniture={snapToFurniture} moveStep={stepMoves ? moveStep : null} />
       </Canvas>
-      <GridScaleLegend showMovement={Boolean(props.onMoveItem)} />
+      {/* One bottom bar lays out the page's legend and the grid/units settings, wrapping the legend above the settings when they don't fit side by side, so neither covers the other. */}
+      <div className={`canvas-footer${props.legend ? " with-legend" : ""}`}>
+        {props.legend}
+        <GridScaleLegend showMovement={Boolean(props.onMoveItem)} />
+      </div>
     </div>
   );
 }

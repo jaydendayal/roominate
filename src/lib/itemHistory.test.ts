@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { removeRoomBed, ROOM_BED_ITEM_ID, setRoomBedSize } from "./beds";
 import { createDemoProject } from "./demo";
-import { applyItemPatch, COALESCE_MS, emptyHistory, HISTORY_LIMIT, nextEdit, recordEdit, redoEdit, undoEdit, type ItemHistory, type ItemPatch } from "./itemHistory";
+import { applyItemPatch, COALESCE_MS, emptyHistory, HISTORY_LIMIT, nextEdit, recordEdit, recordRemoval, redoEdit, removeItem, undoEdit, type ItemHistory, type ItemPatch } from "./itemHistory";
 import type { Project } from "./types";
 
 const item = (project: Project, id: string) => project.items.find((candidate) => candidate.id === id)!;
@@ -100,6 +100,32 @@ describe("3D Studio undo/redo", () => {
     const undone = undoEdit(state.history, noBed)!;
     expect(item(undone.project, "item-chair").transform!.position.x).toBe(2.9);
     expect(undone.history.past).toEqual([]);
+  });
+
+  it("removes an item, and undo puts it back in its place in the list", () => {
+    const project = createDemoProject();
+    const index = project.items.findIndex((candidate) => candidate.id === "item-chair");
+    const original = item(project, "item-chair");
+    const history = recordRemoval(emptyHistory, project, "item-chair", 1000);
+    const removed = removeItem(project, "item-chair");
+    expect(removed.items.some((candidate) => candidate.id === "item-chair")).toBe(false);
+    expect(nextEdit(history, removed, "undo")).toMatchObject({ label: "Remove", itemId: "item-chair" });
+
+    const undone = undoEdit(history, removed)!;
+    expect(undone.project.items[index]).toEqual(original);
+    const redone = redoEdit(undone.history, undone.project)!;
+    expect(redone.project.items.some((candidate) => candidate.id === "item-chair")).toBe(false);
+  });
+
+  it("keeps the room's bed setting in step when a bed is removed and restored", () => {
+    const project = createDemoProject();
+    const history = recordRemoval(emptyHistory, project, ROOM_BED_ITEM_ID);
+    const removed = removeItem(project, ROOM_BED_ITEM_ID);
+    const undone = undoEdit(history, removed)!.project;
+    const bed = item(undone, ROOM_BED_ITEM_ID);
+    expect(bed).toEqual(item(project, ROOM_BED_ITEM_ID));
+    expect(undone.products.some((product) => product.id === bed.productId)).toBe(true);
+    expect(undone.room.providedBed).toBe(project.room.providedBed);
   });
 
   it("marks a Better Cart proposal stale like any Studio edit", () => {
