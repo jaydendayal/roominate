@@ -8,6 +8,7 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { LengthInput } from "./LengthInput";
 import { calculateIssues, collidingItemIds, featureWall, itemElevation, itemExceedsRoom, itemExceedsRoomBox, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
+import { visualProfileFor } from "@/lib/productModels";
 import { floorGridSegments, roomPolygon, wallSegments } from "@/lib/roomShape";
 import { normalizeRotation, snapItemPosition, snapRotation, stepPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Room, RoomFeature, Vec2 } from "@/lib/types";
@@ -344,7 +345,8 @@ function FurnitureItem({
     ? issues.some((issue) => issue.severity === "error" && issue.affectedItemIds.includes(item.id) && !issue.affectedGeometryIds.includes(project.room.id))
     : conflict || itemExceedsRoom(project, item);
   const color = selected ? "#b7b5e4" : tintConflict ? CONFLICT_TINT : item.acquisitionStatus === "owned" ? "#aaa6b3" : personTone(project, item.ownerId).fill;
-  const modelProps = { category: product.category, name: product.name, dimensions: { width: dimensions.width, depth: dimensions.depth, height: dimensions.height }, profile: product.visualProfile };
+  // Shortlist products use their own model in the item's chosen finish; others use their imported profile.
+  const modelProps = { category: product.category, name: product.name, dimensions: { width: dimensions.width, depth: dimensions.depth, height: dimensions.height }, profile: visualProfileFor(product, item.colorSelection) };
 
   // Follows one pointer until release (commit) or cancel, then reports back once.
   const trackPointer = (pointerId: number, move: (pointerEvent: PointerEvent) => void, finish: (commit: boolean) => void) => {

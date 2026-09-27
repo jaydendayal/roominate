@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ensureProvidedBed, isRoomBedItem } from "@/lib/beds";
 import { createBlankProject, createDemoProject } from "@/lib/demo";
 import { initialProductPlacement } from "@/lib/discovery";
 import { mergeShortlistProducts } from "@/lib/shortlist";
@@ -47,7 +48,11 @@ function migrateProjectAxes(source: Project): Project {
       };
     });
   }
-  return project;
+  // Last, so the default bed is placed against the migrated positions. A saved demo gets the fixture's bed spot.
+  const withBed = ensureProvidedBed(project);
+  if (project.id !== "project-demo" || project.room.providedBed !== undefined) return withBed;
+  const demoBed = createDemoProject().items.find(isRoomBedItem)!;
+  return { ...withBed, items: withBed.items.map((item) => isRoomBedItem(item) ? { ...item, transform: demoBed.transform } : item) };
 }
 
 // Made-up products from the original demo fixture, since replaced by real shortlist products.

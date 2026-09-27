@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Camera, Check, Crosshair, DoorOpen, DraftingCompass, ImagePlus, LoaderCircle, Palette, Plus, Ruler, ScanLine, Trash2, Upload, Video } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BedDouble, Camera, Check, Crosshair, DoorOpen, DraftingCompass, ImagePlus, LoaderCircle, Palette, Plus, Ruler, ScanLine, Trash2, Upload, Video } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
-import { calculateIssues } from "@/lib/calculations";
+import { BED_SIZES, currentBedSize, DEFAULT_BED_SIZE, isRoomBedItem, setProvidedBed } from "@/lib/beds";
+import { calculateIssues, productFor } from "@/lib/calculations";
 import { apiFetch, normalizeImageUpload } from "@/lib/api";
 import { FEATURE_DEFAULTS, hasShapedOutline, pointOnWall, roomArea, roomPolygon } from "@/lib/roomShape";
-import type { EvidenceSource, MediaAsset, PaletteSwatch, Project, RoomFeature } from "@/lib/types";
+import type { BedSize, EvidenceSource, MediaAsset, PaletteSwatch, Project, RoomFeature } from "@/lib/types";
+import { ColorChoicePicker } from "../ColorChoicePicker";
 import { LengthInput } from "../LengthInput";
 import { RoomCanvas } from "../RoomCanvas";
 import { FloorPlanScan, type FloorPlanResult } from "./FloorPlanScan";
@@ -115,6 +117,10 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
   const scaleConfirmed = project.room.dimensionEvidence.width.confirmedByUser || project.room.dimensionEvidence.length.confirmedByUser;
   const guidedAssets = project.room.mediaAssets.filter((asset) => asset.name.startsWith("guided-"));
   const analysisAssets = guidedAssets.length >= 5 ? [guidedAssets[0], guidedAssets[2], guidedAssets[4]] : project.room.mediaAssets.slice(0, 3);
+  const bedSize = currentBedSize(project);
+  const bedItem = project.items.find(isRoomBedItem);
+  const bedModel = bedItem ? productFor(project, bedItem) : null;
+  const mattressLabel = ([width, length]: [number, number]) => units.objectUnit === "in" ? `${width} × ${length} in` : `${Math.round(width * 2.54)} × ${Math.round(length * 2.54)} cm`;
 
   const updateRoom = (patch: Partial<Project["room"]>) => update((current) => ({
     ...current,
@@ -310,6 +316,17 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
           {scaleConfirmed
             ? <div className="evidence-note"><Ruler size={17} /><span><strong>Scale is anchored.</strong> The room has a valid floor and positive confirmed dimensions for placement.</span></div>
             : <div className="evidence-note unanchored"><AlertTriangle size={17} /><span><strong>Scale is an estimate.</strong> Measure the width or length and mark it confirmed before trusting what fits.</span></div>}
+          <div className="subsection-title"><h3>Bed that comes with the room</h3></div>
+          <div className="bed-setting">
+            <label><span>Bed size</span>
+              <select value={bedSize} onChange={(event) => update((current) => setProvidedBed(current, event.target.value as BedSize | "none"))}>
+                {BED_SIZES.map((info) => <option value={info.id} key={info.id}>{info.label} · {mattressLabel(info.mattress)} mattress{info.id === DEFAULT_BED_SIZE ? " (typical dorm)" : ""}</option>)}
+                <option value="none">No bed provided</option>
+              </select>
+            </label>
+            {bedItem && bedModel && <ColorChoicePicker product={bedModel} selection={bedItem.colorSelection} onChange={(colorSelection) => update((current) => ({ ...current, items: current.items.map((item) => item.id === bedItem.id ? { ...item, colorSelection } : item) }))} />}
+            <small><BedDouble size={14} /> {bedItem ? "Placed in the 3D Studio as an owned item you can move or lock. It counts for fit and clearance, never for the cart." : "No bed is modeled. Pick a size to add the room's bed."}</small>
+          </div>
           <div className="subsection-title"><h3>Openings & fixed features</h3><button className="text-button" onClick={() => updateRoom({ features: [...project.room.features, { id: `door-${crypto.randomUUID()}`, name: "New door", kind: "door", position: { x: 0.5, y: 0 }, width: 0.9, depth: 0.08, height: 2.03, confirmed: false }] })}><Plus size={15} /> Add</button></div>
           <div className="feature-list">
             {project.room.features.map((feature) => <div className="feature-row" key={feature.id}><span><DoorOpen size={17} /><strong>{feature.name}</strong></span><small>{units.formatLength(feature.width, "object")} wide · {feature.wall && feature.wall !== "unknown" ? `${feature.wall} wall · ` : ""}{feature.confirmed ? "confirmed" : "needs review"}</small><span className="feature-actions">{!feature.confirmed && <button className="text-button" onClick={() => updateRoom({ features: project.room.features.map((candidate) => candidate.id === feature.id ? { ...candidate, confirmed: true } : candidate) })}><Check size={13} /> Confirm</button>}<button className="icon-button danger" onClick={() => updateRoom({ features: project.room.features.filter((candidate) => candidate.id !== feature.id) })} aria-label={`Remove ${feature.name}`}><Trash2 size={13} /></button></span></div>)}

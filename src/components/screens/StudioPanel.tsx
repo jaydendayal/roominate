@@ -6,6 +6,7 @@ import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/calculations";
 import { snapItemPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
+import { ColorChoicePicker } from "../ColorChoicePicker";
 import { LengthInput } from "../LengthInput";
 import { personTone } from "../personTones";
 import { RoomCanvas } from "../RoomCanvas";
@@ -140,7 +141,7 @@ export function StudioPanel({
           cutaway={cutaway}
           viewCommand={viewCommand}
         />
-        <div className="viewport-legend"><span><i className="legend-owned" /> Owned</span><span><i className="legend-planned" /> Planned</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag to move · purple ring rotates · blue arrow lifts</span></div>
+        <div className="viewport-legend"><span><i className="legend-finish" /> Chosen product colors</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag to move · purple ring rotates · blue arrow lifts</span></div>
       </section>
 
       <section className="studio-inspector panel-surface">
@@ -155,6 +156,8 @@ export function StudioPanel({
             <p className="eyebrow">Selected object</p>
             <h3>{selectedProduct.name}</h3>
             <p className="muted-copy">{units.formatDimensions(selectedProduct.dimensions)} · {selected.placementType}</p>
+            {/* Finish changes the 3D model's colors; allowed on locked items since the lock covers position and rotation. */}
+            <ColorChoicePicker product={selectedProduct} selection={selected.colorSelection} onChange={(colorSelection) => changeItem(selected.id, { colorSelection })} />
             <button
               type="button"
               className={`lock-toggle ${selected.locked ? "on" : ""}`}
