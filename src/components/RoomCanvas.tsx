@@ -690,7 +690,6 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
   return (
     <>
       <color attach="background" args={["#dcdae2"]} />
-      <fog attach="fog" args={["#dcdae2", 8, 16]} />
       <ambientLight intensity={1.8} />
       <directionalLight position={[2, 5, 7]} intensity={2.5} castShadow shadow-mapSize={[1024, 1024]} />
       <CameraRig project={project} command={viewCommand} cutaway={cutaway} controlsRef={controls} />
