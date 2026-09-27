@@ -245,6 +245,8 @@ input, select { color: var(--ink); }
 .view-badge, .viewport-button { border: 1px solid var(--line-strong); background: rgba(244, 243, 247, .94); border-radius: var(--radius-sm); height: 34px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; }
 .viewport-button:hover { border-color: var(--ink); }
 .viewport-button.active { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.viewport-button:disabled { opacity: .45; cursor: default; border-color: var(--line-strong); }
+.history-buttons { display: flex; gap: 5px; margin-right: 6px; padding-right: 11px; border-right: 1px solid var(--line-strong); }
 .viewport-legend { position: absolute; bottom: 11px; left: 11px; max-width: calc(100% - 330px); z-index: 5; background: rgba(244, 243, 247, .94); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 11.5px; color: var(--muted); }
 .room-canvas { position: relative; width: 100%; height: 100%; }
 .grid-scale { position: absolute; bottom: 11px; right: 11px; z-index: 5; background: rgba(244, 243, 247, .95); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 6px 7px 6px 9px; display: flex; flex-direction: column; align-items: stretch; gap: 6px; max-width: calc(100% - 22px); font-size: 11.5px; font-weight: 600; color: var(--ink); }
@@ -403,6 +405,21 @@ input, select { color: var(--ink); }
 .plan-wall-tag text { fill: #a3155a; font-family: var(--font-mono); font-weight: 500; text-anchor: middle; }
 .plan-wall-tag.measured rect { fill: #d81b72; }
 .plan-wall-tag.measured text { fill: var(--paper); }
+.plan-wall-tag .plan-wall-length { font-weight: 400; }
+.plan-figure svg.marking-door { cursor: copy; }
+.plan-door line { stroke: #1f6fb2; stroke-width: 6; stroke-linecap: butt; vector-effect: non-scaling-stroke; }
+.plan-door text { fill: #1f6fb2; font-family: var(--font-mono); font-weight: 600; text-anchor: middle; paint-order: stroke; stroke: var(--paper); stroke-width: 3px; }
+.plan-hint.marking { color: #1f6fb2; font-weight: 600; }
+.plan-help { margin: 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.plan-help strong { color: var(--ink); }
+.plan-doorway { display: grid; gap: 8px; padding: 11px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--field); }
+.plan-doorway-head { display: flex; align-items: center; gap: 7px; font-size: 13.5px; }
+.plan-doorway-head .source-chip { margin-left: auto; }
+.plan-doorway p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.plan-doorway p b { font-family: var(--font-mono); color: var(--ink); }
+.plan-doorway-actions { display: flex; align-items: center; gap: 10px; }
+.plan-door-width { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12.5px; font-weight: 600; }
+.plan-door-width .unit-input { width: 118px; height: 32px; }
 .plan-seed circle { fill: var(--ink); stroke: var(--paper); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .plan-seed path { stroke: var(--ink); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
 .plan-status { position: absolute; top: 8px; left: 8px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 3px; background: var(--ink); color: var(--paper); font: 500 11px var(--font-mono); }

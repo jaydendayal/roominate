@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, ChevronRight, Eye, Grid3X3, Lock, Maximize2, Move3D, PackagePlus, RotateCw, ScanLine, ShoppingCart, Unlock } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, ChevronRight, Eye, Grid3X3, Lock, Maximize2, Move3D, PackagePlus, Redo2, RotateCw, ScanLine, ShoppingCart, Undo2, Unlock } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/calculations";
+import { applyItemPatch, nextEdit, recordEdit, redoEdit, undoEdit, type ItemEdit, type ItemHistory, type ItemPatch } from "@/lib/itemHistory";
 import { snapItemPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
 import { ColorChoicePicker } from "../ColorChoicePicker";
@@ -15,41 +16,87 @@ export function StudioPanel({
   project,
   issues,
   update,
+  history,
+  onHistoryChange,
   onOpenProducts,
   onOpenIssues,
 }: {
   project: Project;
   issues: Issue[];
   update: (updater: (project: Project) => Project) => void;
+  history: ItemHistory;
+  onHistoryChange: (change: (history: ItemHistory) => ItemHistory) => void;
   onOpenProducts: () => void;
   onOpenIssues: () => void;
 }) {
   const [selectedId, setSelectedId] = useState(project.items.find((item) => item.transform)?.id ?? null);
   const [cutaway, setCutaway] = useState(true);
   const [viewCommand, setViewCommand] = useState<{ type: "reset" | "overhead"; nonce: number }>({ type: "reset", nonce: 0 });
+  const [isMac, setIsMac] = useState(false);
   const selected = project.items.find((item) => item.id === selectedId);
   const selectedProduct = selected ? productFor(project, selected) : null;
   const selectedIssues = issues.filter((issue) => selectedId && issue.affectedItemIds.includes(selectedId));
   const subtotal = purchaseSubtotal(project);
   const units = useUnitPreferences();
+  const viewOnly = project.collaboration?.permission === "view";
 
-  const changeItem = (itemId: string, patch: Partial<Project["items"][number]>) => {
-    update((current) => ({
-      ...current,
-      items: current.items.map((item) => item.id === itemId ? { ...item, ...patch } : item),
-      cartVersion: current.cartVersion + 1,
-      proposal: current.proposal ? { ...current.proposal, stale: true } : null,
-    }));
+  // Every Studio edit (drag, rotate, lift, typed or nudged move, lock, color, unplace) goes through here and is undoable.
+  // `typed` values change on every keystroke, so quick follow-ups fold into one undo step.
+  const changeItem = (itemId: string, patch: ItemPatch, typed = false) => {
+    if (!viewOnly) onHistoryChange((current) => recordEdit(current, project, itemId, patch, Date.now(), typed));
+    update((current) => applyItemPatch(current, itemId, patch));
   };
+
+  const undoTarget = nextEdit(history, project, "undo");
+  const redoTarget = nextEdit(history, project, "redo");
+  const describe = (edit: ItemEdit | null) => {
+    const item = edit && project.items.find((candidate) => candidate.id === edit.itemId);
+    const name = item ? productFor(project, item)?.name ?? "item" : "";
+    return edit ? `${edit.label.toLowerCase()} ${name}` : "";
+  };
+  const shortcut = (redo: boolean) => isMac ? (redo ? "⇧⌘Z" : "⌘Z") : (redo ? "Ctrl+Y" : "Ctrl+Z");
+
+  const travel = (direction: "undo" | "redo") => {
+    if (viewOnly) return;
+    const result = direction === "undo" ? undoEdit(history, project) : redoEdit(history, project);
+    if (!result) return;
+    const moved = (direction === "undo" ? result.history.future : result.history.past).slice(-1)[0];
+    onHistoryChange(() => result.history);
+    update(() => result.project);
+    if (moved) setSelectedId(moved.itemId);
+  };
+
+  useEffect(() => {
+    setIsMac(/Mac|iPhone|iPad/.test(navigator.userAgent));
+  }, []);
+
+  // Ctrl/⌘+Z undoes; Ctrl+Y, Ctrl/⌘+Shift+Z redo. Text fields keep their own native undo.
+  const travelRef = useRef(travel);
+  useEffect(() => {
+    travelRef.current = travel;
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
+      const key = event.key.toLowerCase();
+      const direction = key === "z" ? (event.shiftKey ? "redo" : "undo") : key === "y" && !event.shiftKey ? "redo" : null;
+      if (!direction) return;
+      event.preventDefault();
+      travelRef.current(direction);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Per-item lock: freezes position and rotation (drag, lift, typed values, nudges, rotate, unplace) and Better Cart treats it as fixed.
   const toggleLock = (item: Item) => changeItem(item.id, { locked: !item.locked });
 
   // Typed and nudged moves settle like drags: off the top of an item they drop to the floor, into one they land on top.
-  const moveTo = (item: Item, position: Vec2) => {
+  const moveTo = (item: Item, position: Vec2, typed = false) => {
     if (item.locked) return;
     const transform = item.transform ?? { position, rotationZ: 0 };
-    changeItem(item.id, { transform: { ...transform, position, elevation: settledElevation(project, { ...item, transform }, position) } });
+    changeItem(item.id, { transform: { ...transform, position, elevation: settledElevation(project, { ...item, transform }, position) } }, typed);
   };
 
   const rotateSelected = () => {
@@ -73,13 +120,13 @@ export function StudioPanel({
   const moveSelectedAxis = (axis: keyof Vec2, meters: number | null) => {
     if (!selected || meters == null) return;
     const position = { x: selected.transform?.position.x ?? 0, y: selected.transform?.position.y ?? 0, [axis]: meters };
-    moveTo(selected, position);
+    moveTo(selected, position, true);
   };
 
   const setSelectedElevation = (meters: number | null) => {
     if (!selected || selected.locked || meters == null) return;
     const transform = selected.transform ?? { position: { x: project.room.width / 2, y: project.room.length / 2 }, rotationZ: 0 };
-    changeItem(selected.id, { transform: { ...transform, elevation: meters } });
+    changeItem(selected.id, { transform: { ...transform, elevation: meters } }, true);
   };
 
   return (
@@ -124,6 +171,24 @@ export function StudioPanel({
         <div className="viewport-topbar">
           <span className="view-badge"><ScanLine size={14} /> {units.formatLength(project.room.width)} × {units.formatLength(project.room.length)}</span>
           <div>
+            <div className="history-buttons" role="group" aria-label="Edit history">
+              <button
+                type="button"
+                className="viewport-button"
+                disabled={viewOnly || !undoTarget}
+                onClick={() => travel("undo")}
+                aria-label={undoTarget ? `Undo ${describe(undoTarget)}` : "Nothing to undo"}
+                title={undoTarget ? `Undo ${describe(undoTarget)} (${shortcut(false)})` : "Nothing to undo"}
+              ><Undo2 size={16} /><span>Undo</span></button>
+              <button
+                type="button"
+                className="viewport-button"
+                disabled={viewOnly || !redoTarget}
+                onClick={() => travel("redo")}
+                aria-label={redoTarget ? `Redo ${describe(redoTarget)}` : "Nothing to redo"}
+                title={redoTarget ? `Redo ${describe(redoTarget)} (${shortcut(true)})` : "Nothing to redo"}
+              ><Redo2 size={16} /><span>Redo</span></button>
+            </div>
             <button className={`viewport-button ${cutaway ? "active" : ""}`} onClick={() => setCutaway((current) => !current)}><Eye size={16} /><span>Cutaway</span></button>
             <button className="viewport-button" onClick={() => setViewCommand({ type: "overhead", nonce: Date.now() })}><Grid3X3 size={16} /><span>Overhead</span></button>
             <button className="viewport-button" onClick={() => setViewCommand({ type: "reset", nonce: Date.now() })}><Maximize2 size={16} /><span>Reset</span></button>

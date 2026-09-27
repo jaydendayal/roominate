@@ -1,6 +1,6 @@
 import type { FloorTrace } from "./floorPlanTrace";
-import { closestPointOnSegment, FEATURE_DEFAULTS, nearestWall, outlineFromPolygon, roomPolygon } from "./roomShape";
-import type { Room, RoomFeature, Vec2 } from "./types";
+import { closestPointOnSegment, FEATURE_DEFAULTS, nearestWall, outlineFromPolygon, roomPolygon, wallSegments } from "./roomShape";
+import type { ClearanceZone, Room, RoomFeature, Vec2 } from "./types";
 
 // Turns a traced plan outline (pixels) into a room (meters). Measurements the user enters, or printed
 // dimensions they accept, set the scale; without any, the shape keeps its proportions at an estimated size.
@@ -144,6 +144,54 @@ export interface PlanOpening {
   widthRatio: number | null;
   confidence: number;
   evidence: string;
+}
+
+/** Id prefix of the keep-clear swing area added for a doorway marked on a floor plan. */
+export const PLAN_DOOR_SWING_ID = "plan-door-swing";
+/** Evidence note on a door marked on a floor plan, so marking it again replaces it. */
+export const DOORWAY_EVIDENCE = "Doorway marked on the floor plan";
+
+/**
+ * The entry door the user marked on the plan (a point in the traced image's pixels, snapped to the
+ * nearest traced wall), as a confirmed door plus a square keep-clear area for its swing inside the room.
+ */
+export function planDoorway(
+  point: Vec2,
+  widthMeters: number,
+  trace: Pick<FloorTrace, "outline" | "angle" | "center">,
+  imageSize: { width: number; height: number },
+  scale: PlanScale,
+  room: Pick<Room, "width" | "length" | "outline">,
+): { feature: RoomFeature; zone: ClearanceZone } | null {
+  const [door] = planOpeningFeatures([{
+    kind: "door",
+    label: "Entry door",
+    wallLabel: null,
+    position: { x: point.x / imageSize.width, y: point.y / imageSize.height },
+    widthRatio: null,
+    confidence: 1,
+    evidence: DOORWAY_EVIDENCE,
+  }], trace, imageSize, scale, room);
+  if (!door) return null;
+  // The wall the door was placed on: the nearest one facing the same way (the door's spot is inset
+  // from its wall, so near a corner the side wall can be closer).
+  const hit = wallSegments(roomPolygon(room))
+    .filter((candidate) => candidate.facing === door.wall)
+    .map((segment) => ({ segment, ...closestPointOnSegment(door.position, segment.start, segment.end) }))
+    .sort((a, b) => a.distance - b.distance)[0];
+  if (!hit) return null;
+  const { segment } = hit;
+  const width = Math.max(0.3, Math.min(widthMeters, segment.length));
+  // Slide the door along its wall so all of it fits, even when marked right by a corner.
+  const along = Math.max(width / 2, Math.min(segment.length - width / 2, hit.t * segment.length));
+  const direction = { x: (segment.end.x - segment.start.x) / segment.length, y: (segment.end.y - segment.start.y) / segment.length };
+  const center = { x: segment.start.x + direction.x * along, y: segment.start.y + direction.y * along };
+  // Normals point out of the room: the door sits just inside the wall, and its swing keeps a door-width square clear in front of it.
+  const inside = (distance: number) => ({ x: center.x - segment.normal.x * distance, y: center.y - segment.normal.y * distance });
+  return {
+    feature: { ...door, position: inside(door.depth / 2), width, source: "user_confirmed", confirmed: true },
+    zone: { id: `${PLAN_DOOR_SWING_ID}-${door.id}`, name: "Entry door swing", position: inside(width / 2), width, depth: width, source: "user_confirmed", confirmed: true },
+  };
 }
 
 /**
