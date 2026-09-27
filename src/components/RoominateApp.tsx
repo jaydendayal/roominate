@@ -174,7 +174,7 @@ function RoominateWorkspace() {
             {workspaceTabs.map((item) => {
               const Icon = item.icon;
               const count = item.id === "issues" ? issues.length : item.id === "products" ? activeProject.items.filter((candidate) => candidate.purchaseStatus === "in_cart").length : 0;
-              return <button key={item.id} className={screen === item.id ? "active" : ""} onClick={() => { setScreen(item.id); setMobileNav(false); }}><i className="nav-index">{item.index}</i><Icon size={17} /><span>{item.label}</span>{count > 0 && <b>{count}</b>}</button>;
+              return <button key={item.id} className={screen === item.id ? "active" : ""} aria-label={item.label} title={item.label} onClick={() => { setScreen(item.id); setMobileNav(false); }}><i className="nav-index">{item.index}</i><Icon size={17} /><span className="nav-label">{item.label}</span>{count > 0 && <b>{count}</b>}<span className="nav-tooltip" aria-hidden="true">{item.label}</span></button>;
             })}
           </nav>
           <div className="sidebar-summary">
@@ -182,7 +182,7 @@ function RoominateWorkspace() {
             <div className="budget-track"><span style={{ width: `${Math.min(100, (subtotal.amount / activeProject.budgetAmount) * 100)}%` }} /></div>
             <small className={subtotal.amount > activeProject.budgetAmount ? "warn-text" : ""}>{subtotal.amount > activeProject.budgetAmount ? `${cents(subtotal.amount - activeProject.budgetAmount)} over` : `${cents(activeProject.budgetAmount - subtotal.amount)} left`}</small>
           </div>
-          <button className="dashboard-link" onClick={() => setActiveId(null)}><House size={17} /><span>Room model</span></button>
+          <button className="dashboard-link" aria-label="Room model" title="Room model" onClick={() => setActiveId(null)}><House size={17} /><span className="nav-label">Room model</span><span className="nav-tooltip" aria-hidden="true">Room model</span></button>
         </aside>
         <main className="workspace-main">
           {screen === "capture" && <CapturePanel project={activeProject} update={update} onContinue={() => setScreen("studio")} />}

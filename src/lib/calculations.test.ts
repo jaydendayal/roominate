@@ -19,6 +19,12 @@ describe("Roominate deterministic engines", () => {
     expect(types.has("rule")).toBe(true);
   });
 
+  it("does not treat budget or policy notices as 3D placement conflicts", () => {
+    const issues = calculateIssues(createDemoProject());
+    expect(issues.some((issue) => issue.type === "budget" && issue.severity === "error")).toBe(true);
+    expect(itemHasConflict(issues, "item-desk")).toBe(false);
+  });
+
   it("builds the demo only from real shortlist products", () => {
     const project = createDemoProject();
     // The bed that comes with the room is the one non-retail item: it has no store listing or price.

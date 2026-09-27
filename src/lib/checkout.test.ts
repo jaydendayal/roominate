@@ -23,5 +23,6 @@ describe("retailer checkout", () => {
     const product = createDemoProject().products[0];
     expect(safeCheckoutURL({ ...product, sourceURL: "http://amazon.com/item" })).toBeNull();
     expect(safeCheckoutURL({ ...product, sourceURL: "https://amazon.com/item" })).toContain("https://amazon.com/item");
+    expect(safeCheckoutURL({ ...product, sourceURL: "https://www.ikea.com/us/en/p/markus-office-chair-vissle-dark-gray-90289172/" })).toContain("ikea.com/us/en/p/markus");
   });
 });
