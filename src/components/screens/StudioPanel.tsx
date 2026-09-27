@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, ChevronR
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/calculations";
 import { applyItemPatch, nextEdit, recordEdit, redoEdit, undoEdit, type ItemEdit, type ItemHistory, type ItemPatch } from "@/lib/itemHistory";
+import { arrowAxis, isArrowKey, verticalKey } from "@/lib/keyboardMoves";
 import { snapItemPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
 import { ColorChoicePicker } from "../ColorChoicePicker";
@@ -70,25 +71,6 @@ export function StudioPanel({
     setIsMac(/Mac|iPhone|iPad/.test(navigator.userAgent));
   }, []);
 
-  // Ctrl/⌘+Z undoes; Ctrl+Y, Ctrl/⌘+Shift+Z redo. Text fields keep their own native undo.
-  const travelRef = useRef(travel);
-  useEffect(() => {
-    travelRef.current = travel;
-  });
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
-      if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
-      const key = event.key.toLowerCase();
-      const direction = key === "z" ? (event.shiftKey ? "redo" : "undo") : key === "y" && !event.shiftKey ? "redo" : null;
-      if (!direction) return;
-      event.preventDefault();
-      travelRef.current(direction);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   // Per-item lock: freezes position and rotation (drag, lift, typed values, nudges, rotate, unplace) and Better Cart treats it as fixed.
   const toggleLock = (item: Item) => changeItem(item.id, { locked: !item.locked });
 
@@ -128,6 +110,54 @@ export function StudioPanel({
     const transform = selected.transform ?? { position: { x: project.room.width / 2, y: project.room.length / 2 }, rotationZ: 0 };
     changeItem(selected.id, { transform: { ...transform, elevation: meters } }, true);
   };
+
+  // Raises or lowers the selected item by one step; it stops at the floor.
+  const liftSelected = (direction: -1 | 1) => {
+    if (!selected?.transform || selected.locked) return;
+    const current = selected.transform.elevation ?? 0;
+    const elevation = Math.max(0, Number((current + direction * units.moveStep).toFixed(4)));
+    if (elevation !== current) changeItem(selected.id, { transform: { ...selected.transform, elevation } });
+  };
+
+  // Keyboard shortcuts, active while the Studio is open and focus isn't in a text field or color list:
+  // - arrow keys step the selected item along X or Y, whichever matches that direction on screen;
+  // - + and − step it up and down the Z axis;
+  // - Ctrl/⌘+Z undoes; Ctrl+Y or Ctrl/⌘+Shift+Z redoes.
+  // Each press moves by the "Move in steps" distance and is its own undo step.
+  const screenRightRef = useRef<(() => Vec2) | null>(null);
+  const onStudioKey = (event: KeyboardEvent) => {
+    if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true'], [role='listbox'], [aria-haspopup='listbox']")) return;
+    if (event.ctrlKey || event.metaKey) {
+      if (event.altKey) return;
+      const key = event.key.toLowerCase();
+      const direction = key === "z" ? (event.shiftKey ? "redo" : "undo") : key === "y" && !event.shiftKey ? "redo" : null;
+      if (!direction) return;
+      event.preventDefault();
+      travel(direction);
+      return;
+    }
+    if (event.altKey || !selected?.transform) return;
+    if (isArrowKey(event.key)) {
+      event.preventDefault();
+      const { axis, direction } = arrowAxis(event.key, screenRightRef.current?.() ?? { x: 1, y: 0 });
+      nudgeSelected(axis, direction);
+      return;
+    }
+    const vertical = verticalKey(event.key);
+    if (vertical) {
+      event.preventDefault();
+      liftSelected(vertical);
+    }
+  };
+  const keyHandler = useRef(onStudioKey);
+  useEffect(() => {
+    keyHandler.current = onStudioKey;
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => keyHandler.current(event);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="studio-layout">
@@ -205,8 +235,9 @@ export function StudioPanel({
           }}
           cutaway={cutaway}
           viewCommand={viewCommand}
+          screenRightRef={screenRightRef}
         />
-        <div className="viewport-legend"><span><i className="legend-finish" /> Chosen product colors</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag to move · purple ring rotates · blue arrow lifts</span></div>
+        <div className="viewport-legend"><span><i className="legend-finish" /> Chosen product colors</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag to move · purple ring rotates · blue arrow lifts · arrow keys move · + / − raise and lower</span></div>
       </section>
 
       <section className="studio-inspector panel-surface">
@@ -240,12 +271,14 @@ export function StudioPanel({
             </div>
             <div className="nudge-row" role="group" aria-label={`Move by ${stepLabel}`}>
               <span>Move {stepLabel}</span>
-              {([["x", -1, "−X", ArrowLeft], ["x", 1, "+X", ArrowRight], ["y", -1, "−Y", ArrowUp], ["y", 1, "+Y", ArrowDown]] as const).map(([axis, direction, label, Icon]) => (
+              {/* Icons match the default view, where +Y (north) runs up the screen, like the ↑ key. */}
+              {([["x", -1, "−X", ArrowLeft], ["x", 1, "+X", ArrowRight], ["y", 1, "+Y", ArrowUp], ["y", -1, "−Y", ArrowDown]] as const).map(([axis, direction, label, Icon]) => (
                 <button key={label} type="button" className="secondary-button" disabled={selected.locked || !selected.transform} aria-label={`Move ${label} by ${stepLabel}`} title={`Move ${label} by ${stepLabel}`} onClick={() => nudgeSelected(axis, direction)}>
                   <Icon size={14} aria-hidden="true" />{label}
                 </button>
               ))}
             </div>
+            <p className="key-hint"><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move on screen · <kbd>+</kbd><kbd>−</kbd> raise / lower · {stepLabel} per press</p>
             <div className="button-pair">
               <button className="secondary-button" disabled={selected.locked} onClick={rotateSelected}><RotateCw size={16} /> Rotate 90°</button>
               <button className="secondary-button" disabled={selected.locked} onClick={() => changeItem(selected.id, { transform: null })}>Unplace</button>
