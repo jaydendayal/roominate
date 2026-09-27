@@ -77,6 +77,16 @@ Copy `.env.example`. The main settings are:
 | `AMAZON_CREDENTIAL_VERSION` | No | `3.1` | Credential version used to select the regional OAuth endpoint. |
 | `AMAZON_PARTNER_TAG` | No | unset | Accepted Amazon Associates partner tag. |
 | `AMAZON_MARKETPLACE` | No | `www.amazon.com` | Marketplace sent to catalog search. |
+| `VISA_R2P_MODE` | No | `demo` | `demo` keeps all payment requests local; `sandbox` calls Visa. |
+| `VISA_R2P_USERNAME` / `VISA_R2P_PASSWORD` | Sandbox | unset | Visa Developer mutual-TLS credentials; server only. |
+| `VISA_R2P_CLIENT_CERT` / `VISA_R2P_CLIENT_KEY` | Sandbox | unset | Paths to the Visa project client certificate and its private key. |
+| `VISA_R2P_MLE_KEY_ID` | Sandbox | unset | Visa Message Level Encryption key ID. |
+| `VISA_R2P_MLE_SERVER_CERT` | Sandbox | unset | Path to Visa's MLE public certificate used to encrypt requests. |
+| `VISA_R2P_MLE_PRIVATE_KEY` | Sandbox | unset | Path to Roominate's MLE private key used to decrypt responses. |
+| `VISA_R2P_CREDITOR_AGENT_ID` / `VISA_R2P_DEBTOR_AGENT_ID` | Sandbox | unset | Agent IDs supplied during Visa Request to Pay onboarding. |
+| `VISA_R2P_SETTLEMENT_PAN` | Sandbox | unset | Visa-provided sandbox test PAN used as the `VISA_DIRECT` settlement option; never use a real card number. |
+| `VISA_R2P_SIMULATOR_SCENARIO` | No | `X_2_X_X` | Visa debtor simulator state sequence. `X_2_X_X` settles; `X_3_X_X` rejects. |
+| `VISA_R2P_COUNTRY` | No | `US` | Two-letter country used for the sandbox participants. |
 
 The default rate values were checked against the official [GPT-4.1 mini model page](https://developers.openai.com/api/docs/models/gpt-4.1-mini). If the model changes, update both cost variables before making calls.
 
@@ -85,6 +95,8 @@ The default rate values were checked against the official [GPT-4.1 mini model pa
 The **Products → Shop** screen searches Amazon through the official Creators API when its server-side credentials are configured. Results with complete physical dimensions are run through Roominate's code-based collision and boundary checks; incomplete dimensions stay explicitly marked **Fit unverified**. Adding a result creates a normal shared-cart item and, when possible, places it in the room.
 
 At checkout, Roominate groups products by retailer and opens source listings for users to verify variants and add to each retailer's cart. It does not collect payment details, mutate a retailer cart, or submit an order. IKEA remains a browse-and-import workflow because its U.S. terms currently prohibit automated scraping and unauthorized deep-linking; a direct catalog integration should only be enabled after receiving IKEA permission or an approved partner feed.
+
+After retailer checkout, **Products → Group cart → Settle expenses** treats each assigned buyer as the person who paid, splits every confirmed priced purchase equally, and conserves exact cents in server code. It can create lifecycle-tracked Visa Direct Request to Pay messages. Default demo mode supports local accept/reject states without moving funds. Visa sandbox mode uses server-only mutual TLS and required JWE message-level encryption; it does not store raw card numbers and is not production payment approval.
 
 ## OpenAI boundary and spending safety
 

@@ -23,6 +23,10 @@ class InviteConflictError(InviteError):
     pass
 
 
+class SettlementError(RuntimeError):
+    """A safe, user-facing settlement failure."""
+
+
 class AIStore:
     def __init__(self, path: Path, total_guard_usd: float, max_calls_per_project: int) -> None:
         self.path = path
@@ -285,3 +289,118 @@ class InviteStore:
                 (json.dumps(project, separators=(",", ":"), allow_nan=False), str(project["name"]), revision, token_hash),
             )
         return {"revision": revision}
+
+
+class SettlementStore:
+    """Persists deterministic split calculations and their Visa request state."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = threading.Lock()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=10)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _initialize(self) -> None:
+        with self._connect() as connection:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS settlement_batches (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    currency TEXT NOT NULL,
+                    total_cents INTEGER NOT NULL,
+                    people_json TEXT NOT NULL,
+                    expenses_json TEXT NOT NULL,
+                    transfers_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS payment_requests (
+                    id TEXT PRIMARY KEY,
+                    batch_id TEXT NOT NULL,
+                    transfer_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    provider_request_id TEXT,
+                    affinity TEXT,
+                    status TEXT NOT NULL,
+                    creditor_alias_masked TEXT NOT NULL,
+                    debtor_alias_masked TEXT NOT NULL,
+                    response_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(batch_id, transfer_id),
+                    FOREIGN KEY(batch_id) REFERENCES settlement_batches(id) ON DELETE CASCADE
+                );
+                """
+            )
+
+    @staticmethod
+    def _mask(value: str) -> str:
+        value = value.strip()
+        return f"{value[:2]}••••{value[-2:]}" if len(value) > 4 else "••••"
+
+    def create_batch(self, *, project_id: str, currency: str, people: list[dict[str, Any]], expenses: list[dict[str, Any]], transfers: list[dict[str, Any]]) -> dict[str, Any]:
+        batch_id = f"settlement-{uuid.uuid4()}"
+        created_at = datetime.now(UTC).isoformat()
+        total_cents = sum(int(expense["amount_cents"]) for expense in expenses)
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO settlement_batches VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (batch_id, project_id, currency, total_cents, json.dumps(people), json.dumps(expenses), json.dumps(transfers), created_at),
+            )
+        return {"id": batch_id, "project_id": project_id, "currency": currency, "total_cents": total_cents, "people": people, "expenses": expenses, "transfers": transfers, "created_at": created_at}
+
+    def get_batch(self, batch_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM settlement_batches WHERE id = ?", (batch_id,)).fetchone()
+        if not row:
+            raise SettlementError("This settlement preview no longer exists. Recalculate it first.")
+        return {"id": row["id"], "project_id": row["project_id"], "currency": row["currency"], "total_cents": row["total_cents"], "people": json.loads(row["people_json"]), "expenses": json.loads(row["expenses_json"]), "transfers": json.loads(row["transfers_json"]), "created_at": row["created_at"]}
+
+    def transfer(self, batch_id: str, transfer_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        batch = self.get_batch(batch_id)
+        transfer = next((candidate for candidate in batch["transfers"] if candidate["id"] == transfer_id), None)
+        if not transfer:
+            raise SettlementError("That reimbursement is not part of this confirmed calculation.")
+        return batch, transfer
+
+    def put_request(self, *, batch_id: str, transfer_id: str, provider: str, provider_request_id: str | None, affinity: str | None, status: str, creditor_alias: str, debtor_alias: str, response: dict[str, Any]) -> dict[str, Any]:
+        request_id = f"r2p-{uuid.uuid4()}"
+        now = datetime.now(UTC).isoformat()
+        with self._lock, self._connect() as connection:
+            existing = connection.execute("SELECT * FROM payment_requests WHERE batch_id = ? AND transfer_id = ?", (batch_id, transfer_id)).fetchone()
+            if existing:
+                return self._request(existing)
+            connection.execute(
+                "INSERT INTO payment_requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (request_id, batch_id, transfer_id, provider, provider_request_id, affinity, status, self._mask(creditor_alias), self._mask(debtor_alias), json.dumps(response), now, now),
+            )
+        return self.get_request(request_id)
+
+    @staticmethod
+    def _request(row: sqlite3.Row) -> dict[str, Any]:
+        return {"id": row["id"], "settlement_id": row["batch_id"], "transfer_id": row["transfer_id"], "provider": row["provider"], "provider_request_id": row["provider_request_id"], "status": row["status"], "creditor_alias": row["creditor_alias_masked"], "debtor_alias": row["debtor_alias_masked"], "created_at": row["created_at"], "updated_at": row["updated_at"]}
+
+    def get_request(self, request_id: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM payment_requests WHERE id = ?", (request_id,)).fetchone()
+        if not row:
+            raise SettlementError("Payment request not found.")
+        return self._request(row)
+
+    def request_details(self, request_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM payment_requests WHERE id = ?", (request_id,)).fetchone()
+        if not row:
+            raise SettlementError("Payment request not found.")
+        return self._request(row), {"affinity": row["affinity"], "response": json.loads(row["response_json"])}
+
+    def update_request(self, request_id: str, status: str, response: dict[str, Any]) -> dict[str, Any]:
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("UPDATE payment_requests SET status = ?, response_json = ?, updated_at = ? WHERE id = ?", (status, json.dumps(response), now, request_id))
+        return self.get_request(request_id)

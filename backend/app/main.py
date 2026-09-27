@@ -33,17 +33,23 @@ from .schemas import (
     CreateInviteRequest,
     AcceptInviteRequest,
     UpdateInviteProjectRequest,
+    SettlementPreviewRequest,
+    CreatePaymentRequest,
+    DemoPaymentDecision,
 )
 from .settings import get_settings
-from .store import AIStore, InviteConflictError, InviteError, InviteStore
+from .store import AIStore, InviteConflictError, InviteError, InviteStore, SettlementError, SettlementStore
 from .url_reader import read_product_page
 from .shopping import AmazonCreatorsClient, RetailerConfigurationError
+from .visa_r2p import VisaR2PClient, VisaR2PError
 
 settings = get_settings()
 store = AIStore(settings.database_path, settings.aggregate_guard_usd, settings.max_calls_per_project)
 invite_store = InviteStore(settings.database_path)
+settlement_store = SettlementStore(settings.database_path)
 openai = OpenAIService(settings, store)
 amazon = AmazonCreatorsClient(settings)
+visa_r2p = VisaR2PClient(settings)
 
 MAX_FILE_BYTES = 8_000_000
 MAX_TOTAL_BYTES = 18_000_000
@@ -63,7 +69,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.allowed_origins),
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -71,6 +77,16 @@ app.add_middleware(
 @app.exception_handler(SpendGuardError)
 async def spend_guard_handler(_, exc: SpendGuardError) -> JSONResponse:
     return JSONResponse(status_code=402, content={"detail": str(exc), "code": "spend_guard"})
+
+
+@app.exception_handler(SettlementError)
+async def settlement_error_handler(_, exc: SettlementError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": str(exc), "code": "settlement_error"})
+
+
+@app.exception_handler(VisaR2PError)
+async def visa_error_handler(_, exc: VisaR2PError) -> JSONResponse:
+    return JSONResponse(status_code=502, content={"detail": str(exc), "code": "visa_r2p_error"})
 
 
 def _manual_room(confirmed: dict[str, Any], note: str) -> RoomAIResult:
@@ -264,7 +280,7 @@ def _fallback_visual_profile(name: str | None, category: str | None = None, note
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"status": "ok", "openai_configured": openai.enabled, "amazon_creators_configured": amazon.configured, "model": settings.openai_model, "spend": store.stats()}
+    return {"status": "ok", "openai_configured": openai.enabled, "amazon_creators_configured": amazon.configured, "visa_r2p": visa_r2p.public_status(), "model": settings.openai_model, "spend": store.stats()}
 
 
 @app.post("/api/v1/media/normalize-heic", response_class=Response)
@@ -551,3 +567,105 @@ async def explain_proposal(request: ExplainProposalRequest) -> dict[str, Any]:
         raise
     except Exception:
         return {"status": "manual_fallback", **fallback.model_dump()}
+
+
+def _settlement_transfers(request: SettlementPreviewRequest) -> list[dict[str, Any]]:
+    """Equal split with exact-cent conservation; no AI participates in payment math."""
+    people = request.people
+    total = sum(expense.amount_cents for expense in request.expenses)
+    base, remainder = divmod(total, len(people))
+    paid = {person.id: 0 for person in people}
+    for expense in request.expenses:
+        paid[expense.paid_by_person_id] += expense.amount_cents
+    balances = []
+    for index, person in enumerate(people):
+        fair_share = base + (1 if index < remainder else 0)
+        balances.append({"person": person, "balance": paid[person.id] - fair_share, "paid": paid[person.id], "share": fair_share})
+    debtors = [{**entry, "remaining": -entry["balance"]} for entry in balances if entry["balance"] < 0]
+    creditors = [{**entry, "remaining": entry["balance"]} for entry in balances if entry["balance"] > 0]
+    transfers: list[dict[str, Any]] = []
+    creditor_index = 0
+    for debtor in debtors:
+        while debtor["remaining"] and creditor_index < len(creditors):
+            creditor = creditors[creditor_index]
+            amount = min(debtor["remaining"], creditor["remaining"])
+            transfers.append({
+                "id": f"transfer-{len(transfers) + 1}",
+                "debtor_id": debtor["person"].id,
+                "debtor_name": debtor["person"].name,
+                "creditor_id": creditor["person"].id,
+                "creditor_name": creditor["person"].name,
+                "amount_cents": amount,
+                "description": f"equal share of {len(request.expenses)} confirmed room purchase{'s' if len(request.expenses) != 1 else ''}",
+            })
+            debtor["remaining"] -= amount
+            creditor["remaining"] -= amount
+            if creditor["remaining"] == 0:
+                creditor_index += 1
+    return transfers
+
+
+@app.get("/api/v1/visa/request-to-pay/status")
+async def visa_request_to_pay_status() -> dict[str, Any]:
+    return visa_r2p.public_status()
+
+
+@app.post("/api/v1/settlements/preview")
+async def preview_settlement(request: SettlementPreviewRequest) -> dict[str, Any]:
+    transfers = _settlement_transfers(request)
+    batch = settlement_store.create_batch(
+        project_id=request.project_id,
+        currency=request.currency,
+        people=[person.model_dump() for person in request.people],
+        expenses=[expense.model_dump() for expense in request.expenses],
+        transfers=transfers,
+    )
+    return {**batch, "visa": visa_r2p.public_status(), "calculation": "equal_split_exact_cents"}
+
+
+@app.post("/api/v1/settlements/{settlement_id}/requests")
+async def create_payment_request(settlement_id: str, request: CreatePaymentRequest) -> dict[str, Any]:
+    batch, transfer = settlement_store.transfer(settlement_id, request.transfer_id)
+    people = {person["id"]: person for person in batch["people"]}
+    creditor = people[transfer["creditor_id"]]
+    debtor = people[transfer["debtor_id"]]
+    result = await visa_r2p.initiate(
+        transfer=transfer,
+        creditor=creditor,
+        debtor=debtor,
+        creditor_alias=request.creditor_alias,
+        debtor_alias=request.debtor_alias,
+        alias_type=request.alias_type,
+    )
+    saved = settlement_store.put_request(
+        batch_id=settlement_id,
+        transfer_id=request.transfer_id,
+        provider=visa_r2p.mode,
+        provider_request_id=result["provider_request_id"],
+        affinity=result.get("affinity"),
+        status=result["status"],
+        creditor_alias=request.creditor_alias,
+        debtor_alias=request.debtor_alias,
+        response=result["raw"],
+    )
+    return {**saved, "amount_cents": transfer["amount_cents"], "debtor_name": debtor["name"], "creditor_name": creditor["name"], "sandbox_notice": visa_r2p.mode == "demo"}
+
+
+@app.get("/api/v1/payment-requests/{request_id}")
+async def get_payment_request(request_id: str, refresh: bool = True) -> dict[str, Any]:
+    saved, details = settlement_store.request_details(request_id)
+    if refresh and saved["provider"] == "sandbox" and saved["provider_request_id"] and saved["status"] in {"pending", "accepted"}:
+        result = await visa_r2p.retrieve(saved["provider_request_id"], details["affinity"])
+        saved = settlement_store.update_request(request_id, result["status"], result["raw"])
+    return saved
+
+
+@app.post("/api/v1/payment-requests/{request_id}/demo-decision")
+async def decide_demo_payment_request(request_id: str, decision: DemoPaymentDecision) -> dict[str, Any]:
+    saved = settlement_store.get_request(request_id)
+    if saved["provider"] != "demo":
+        raise SettlementError("Demo decisions cannot change a Visa sandbox request.")
+    if saved["status"] not in {"pending", "accepted"}:
+        raise SettlementError("This payment request is already final.")
+    status = "completed" if decision.decision == "accept" else "rejected"
+    return settlement_store.update_request(request_id, status, {"demo": True, "decision": decision.decision})
