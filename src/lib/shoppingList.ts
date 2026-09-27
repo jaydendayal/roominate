@@ -1,4 +1,5 @@
 import { calculateIssues, productFor, purchaseSubtotal } from "./calculations";
+import { describeColor } from "./productColors";
 import type { Issue, Item, Product, Project } from "./types";
 
 /** Prices observed longer ago than this are labeled stale in the export. */
@@ -18,6 +19,7 @@ const HEADER = [
   "Acquisition status",
   "Priority",
   "Fit status",
+  "Color",
 ];
 
 export function priceStatus(product: Product | undefined, now: Date) {
@@ -62,6 +64,7 @@ export function shoppingListRows(project: Project, now = new Date()): string[][]
       item.acquisitionStatus,
       item.essentiality,
       fitStatus(item, product, issues),
+      product ? describeColor(product, item.colorSelection) : "",
     ]);
   }
   const subtotal = purchaseSubtotal(project);
@@ -80,6 +83,7 @@ export function shoppingListRows(project: Project, now = new Date()): string[][]
     "",
     "",
     "Shipping and tax not included",
+    "",
   ]);
   return rows;
 }

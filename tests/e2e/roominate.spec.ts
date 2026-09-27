@@ -120,14 +120,13 @@ test("product picture creates a preview model and places the confirmed item", as
   })).toEqual({ archetype: "chair", parts: 6, placed: true });
 });
 
-test("shortlist library items are placed into the 3D room when added", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific library placement flow");
+test("shop items are placed into the 3D room when added", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific shop placement flow");
   await page.getByRole("button", { name: "Open room" }).first().click();
   await page.getByRole("button", { name: "Products" }).first().click();
-  await page.getByPlaceholder("Search products, categories, stores…").fill("MARKUS");
-  const card = page.locator("article.product-card").filter({ hasText: "MARKUS" });
+  const card = page.locator("article.listing-card").filter({ has: page.getByRole("heading", { name: /^MARKUS/ }) });
   await expect(card).toBeVisible();
-  await card.getByRole("button", { name: /^Add$/ }).click();
+  await card.getByRole("button", { name: "Add to Roominate" }).click();
   await page.getByRole("button", { name: "3D Studio" }).first().click();
   // Anchored so it matches the item row, not the row's "Lock position and rotation of MARKUS" button.
   await expect(page.getByRole("button", { name: /^MARKUS/ })).toContainText("placed");

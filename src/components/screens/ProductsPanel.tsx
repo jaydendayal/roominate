@@ -1,17 +1,17 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useState } from "react";
 import { AlertCircle, Box, Check, Download, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Sparkles, Store, Trash2, Upload } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { apiFetch, normalizeImageUpload } from "@/lib/api";
 import { cents, productFor } from "@/lib/calculations";
 import { downloadShoppingList } from "@/lib/shoppingList";
-import type { Evidence, FurnitureVisualProfile, Issue, Product, Project } from "@/lib/types";
+import { describeColor } from "@/lib/productColors";
+import type { Evidence, FurnitureVisualProfile, Issue, Item, Product, Project } from "@/lib/types";
 import { LengthInput } from "../LengthInput";
 import { ShoppingDiscovery } from "./ShoppingDiscovery";
 import { RetailerCheckout } from "./RetailerCheckout";
 import { ProductModelPreview } from "../ProductModelPreview";
-import { ProductPhoto } from "../ProductPhoto";
 import { initialProductPlacement } from "@/lib/discovery";
 
 interface ProductDraft {
@@ -111,16 +111,14 @@ function extractedDraft(result: ProductExtractionResponse, source: "url" | "scre
 }
 
 export function ProductsPanel({ project, issues, update }: { project: Project; issues: Issue[]; update: (updater: (project: Project) => Project) => void }) {
-  const [tab, setTab] = useState<"catalog" | "shop" | "import" | "cart" | "checkout">("catalog");
+  const [tab, setTab] = useState<"shop" | "import" | "cart" | "checkout">("shop");
   const [importType, setImportType] = useState<"url" | "screenshot">("url");
   const [url, setUrl] = useState("");
   const [draft, setDraft] = useState<ProductDraft | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
   const units = useUnitPreferences();
   const [visualLoading, setVisualLoading] = useState(false);
-  const shownProducts = useMemo(() => project.products.filter((product) => `${product.name} ${product.category} ${product.store}`.toLowerCase().includes(search.toLowerCase())), [project.products, search]);
 
   const changeProject = (updater: (current: Project) => Project) => update((current) => {
     const next = updater(current);
@@ -216,43 +214,31 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
     setTab("cart");
   };
 
-  const addProduct = (product: Product) => changeProject((current) => ({ ...current, items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: product.id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.tags.slice(0, 1), transform: initialProductPlacement(current, product), placementType: "floor" }] }));
-
-  const addDiscoveredProduct = (product: Product, placement: { position: { x: number; y: number }; rotationZ: number } | null) => changeProject((current) => ({
+  const addDiscoveredProduct = (product: Product, placement: { position: { x: number; y: number }; rotationZ: number } | null, colorSelection?: Item["colorSelection"]) => changeProject((current) => ({
     ...current,
-    products: current.products.some((candidate) => candidate.id === product.id) ? current.products.map((candidate) => candidate.id === product.id ? product : candidate) : [...current.products, product],
-    items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: product.id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.tags.slice(0, 1), transform: placement ?? initialProductPlacement(current, product), placementType: "floor" }],
+    // Keep the project's own copy of a catalog product (it may carry project annotations such as
+    // alternative groups or rule tags); refresh live retailer listings with the latest observation.
+    products: current.products.some((candidate) => candidate.id === product.id)
+      ? (product.tags.includes("shortlist") ? current.products : current.products.map((candidate) => candidate.id === product.id ? product : candidate))
+      : [...current.products, product],
+    items: [...current.items, { id: `item-${crypto.randomUUID()}`, productId: product.id, ownerId: current.ownerId, acquisitionStatus: "buying", purchaseStatus: "in_cart", quantity: 1, essentiality: "optional", needsServed: product.tags.slice(0, 1), transform: placement ?? initialProductPlacement(current, product), placementType: "floor", ...(colorSelection ? { colorSelection } : {}) }],
   }));
 
   const cartItems = project.items.filter((item) => item.purchaseStatus === "in_cart");
   return (
     <div className="flow-page products-page">
       <header className="flow-header compact-flow-header">
-        <div><p className="eyebrow">Product library</p><h1>Bring every store into one room.</h1><p>Imported details remain editable, sourced, and honest about what is missing.</p></div>
+        <div><p className="eyebrow">Products</p><h1>Bring every store into one room.</h1><p>Imported details remain editable, sourced, and honest about what is missing.</p></div>
         <button className="primary-button" onClick={() => { setTab("import"); setDraft(null); }}><Plus size={17} /> Import product</button>
       </header>
       <div className="segment-tabs">
-        <button className={tab === "catalog" ? "active" : ""} onClick={() => setTab("catalog")}><Box size={16} /> Library <span>{project.products.length}</span></button>
         <button className={tab === "shop" ? "active" : ""} onClick={() => setTab("shop")}><Store size={16} /> Shop</button>
         <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload size={16} /> Import</button>
         <button className={tab === "cart" || tab === "checkout" ? "active" : ""} onClick={() => setTab("cart")}><ShoppingCart size={16} /> Group cart <span>{cartItems.length}</span></button>
       </div>
 
-      {tab === "shop" && <ShoppingDiscovery project={project} onAdd={(product, placement) => { addDiscoveredProduct(product, placement); setTab("cart"); }} onImport={() => { setImportType("url"); setDraft(null); setTab("import"); }} />}
+      {tab === "shop" && <ShoppingDiscovery project={project} onAdd={(product, placement, colorSelection) => { addDiscoveredProduct(product, placement, colorSelection); setTab("cart"); }} onImport={() => { setImportType("url"); setDraft(null); setTab("import"); }} />}
 
-      {tab === "catalog" && <section className="panel-surface catalog-panel">
-        <div className="catalog-toolbar"><div className="search-box"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search products, categories, stores…" /></div><span>{shownProducts.length} products</span></div>
-        <div className="product-grid">
-          {shownProducts.map((product) => {
-            const existing = project.items.filter((item) => item.productId === product.id && item.purchaseStatus !== "deferred").length;
-            return <article className="product-card" key={product.id}>
-              <div className={`product-art ${product.imageURL ? "has-photo" : ""}`}><ProductPhoto src={product.imageURL} alt={product.name} iconSize={35} /><span>{product.category}</span></div>
-              <div className="product-card-copy"><small>{product.store}</small><h3>{product.name}</h3><p>{units.formatDimensions(product.dimensions)}</p>{(product.fieldEvidence.dimensions?.confidence ?? 1) < 0.8 && <span className="source-chip uncertain" title={product.fieldEvidence.dimensions?.note}>Verify dimensions</span>}<div><strong>{product.price ? cents(product.price.amount) : "Price unknown"}</strong><button className="secondary-button small" onClick={() => addProduct(product)}><PackagePlus size={14} /> Add {existing ? "another" : ""}</button></div></div>
-            </article>;
-          })}
-          {!shownProducts.length && <div className="empty-state"><Box size={28} /><h3>No products yet</h3><p>Import a URL or screenshot, then confirm the extracted details.</p></div>}
-        </div>
-      </section>}
 
       {tab === "import" && <div className="import-grid">
         <section className="panel-surface import-source">
@@ -296,10 +282,10 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
             const product = productFor(project, item);
             const itemIssues = issues.filter((issue) => issue.affectedItemIds.includes(item.id));
             const fit = !item.transform || Object.values(product?.dimensions ?? {}).some((value) => value == null) ? "Unverified" : itemIssues.some((issue) => issue.type === "fit" || issue.type === "clearance") ? "Conflict" : "Fits";
-            return <div className="cart-table-row" key={item.id}><span className="cart-product"><i><Box size={17} /></i><span><strong>{product?.name}</strong><small>{product?.store} · {item.essentiality}</small></span></span><label><span className="mobile-field-label">Buyer</span><select value={item.ownerId} onChange={(event) => changeProject((current) => ({ ...current, items: current.items.map((candidate) => candidate.id === item.id ? { ...candidate, ownerId: event.target.value } : candidate) }))}>{project.people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label><span className={`fit-status ${fit.toLowerCase()}`}>{fit}</span><strong>{product?.price ? cents(product.price.amount * item.quantity) : "Unknown"}</strong><button className="icon-button danger" aria-label={`Remove ${product?.name}`} onClick={() => changeProject((current) => ({ ...current, items: current.items.map((candidate) => candidate.id === item.id ? { ...candidate, purchaseStatus: "deferred", transform: null } : candidate) }))}><Trash2 size={16} /></button></div>;
+            return <div className="cart-table-row" key={item.id}><span className="cart-product"><i><Box size={17} /></i><span><strong>{product?.name}</strong><small>{product?.store}{product ? ` · ${describeColor(product, item.colorSelection)}` : ""} · {item.essentiality}</small></span></span><label><span className="mobile-field-label">Buyer</span><select value={item.ownerId} onChange={(event) => changeProject((current) => ({ ...current, items: current.items.map((candidate) => candidate.id === item.id ? { ...candidate, ownerId: event.target.value } : candidate) }))}>{project.people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label><span className={`fit-status ${fit.toLowerCase()}`}>{fit}</span><strong>{product?.price ? cents(product.price.amount * item.quantity) : "Unknown"}</strong><button className="icon-button danger" aria-label={`Remove ${product?.name}`} onClick={() => changeProject((current) => ({ ...current, items: current.items.map((candidate) => candidate.id === item.id ? { ...candidate, purchaseStatus: "deferred", transform: null } : candidate) }))}><Trash2 size={16} /></button></div>;
           })}
         </div>
-        {!cartItems.length && <div className="empty-state"><ShoppingCart size={28} /><h3>The group cart is empty</h3><button className="secondary-button" onClick={() => setTab("catalog")}>Browse library</button></div>}
+        {!cartItems.length && <div className="empty-state"><ShoppingCart size={28} /><h3>The group cart is empty</h3><button className="secondary-button" onClick={() => setTab("shop")}>Browse the shop</button></div>}
       </section>}
       {tab === "checkout" && <RetailerCheckout project={project} issues={issues} onBack={() => setTab("cart")} />}
     </div>
