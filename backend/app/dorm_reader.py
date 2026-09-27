@@ -22,6 +22,10 @@ MAX_HTML_BYTES = 1_000_000
 MIN_CONTENT_CHARS = 500
 _last_request_by_host: dict[str, float] = {}
 _rate_lock = asyncio.Lock()
+_robots_lock = asyncio.Lock()
+_robots_cache: dict[str, tuple[float, RobotFileParser | None]] = {}
+_robots_inflight: dict[str, asyncio.Task[RobotFileParser | None]] = {}
+ROBOTS_CACHE_SECONDS = 3600
 
 
 @dataclass(frozen=True)
@@ -87,24 +91,49 @@ class ContentParser(HTMLParser):
 
 async def _rate_limit(host: str) -> None:
     async with _rate_lock:
-        elapsed = time.monotonic() - _last_request_by_host.get(host, 0)
-        if elapsed < 0.75:
-            await asyncio.sleep(0.75 - elapsed)
-        _last_request_by_host[host] = time.monotonic()
+        now = time.monotonic()
+        scheduled = max(now, _last_request_by_host.get(host, 0) + 0.75)
+        _last_request_by_host[host] = scheduled
+    # Sleep outside the global lock: unrelated university hosts can proceed concurrently while
+    # requests to the same host remain spaced out.
+    if scheduled > now:
+        await asyncio.sleep(scheduled - now)
+
+
+async def _load_robots(client: httpx.AsyncClient, robots_url: str) -> RobotFileParser | None:
+    try:
+        response = await client.get(robots_url)
+        if response.status_code >= 400:
+            return None
+        parser = RobotFileParser(robots_url)
+        parser.parse(response.text.splitlines())
+        return parser
+    except httpx.HTTPError:
+        return None
 
 
 async def _robots_allowed(client: httpx.AsyncClient, url: str) -> bool:
     parsed = urlparse(url)
-    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    now = time.monotonic()
+    async with _robots_lock:
+        cached = _robots_cache.get(origin)
+        if cached and cached[0] > now:
+            parser = cached[1]
+            return parser is None or parser.can_fetch(USER_AGENT, url)
+        task = _robots_inflight.get(origin)
+        if task is None:
+            task = asyncio.create_task(_load_robots(client, f"{origin}/robots.txt"))
+            _robots_inflight[origin] = task
     try:
-        response = await client.get(robots_url)
-        if response.status_code >= 400:
-            return True
-        parser = RobotFileParser(robots_url)
-        parser.parse(response.text.splitlines())
-        return parser.can_fetch(USER_AGENT, url)
-    except httpx.HTTPError:
-        return True
+        parser = await task
+    finally:
+        async with _robots_lock:
+            if _robots_inflight.get(origin) is task:
+                _robots_inflight.pop(origin, None)
+    async with _robots_lock:
+        _robots_cache[origin] = (time.monotonic() + ROBOTS_CACHE_SECONDS, parser)
+    return parser is None or parser.can_fetch(USER_AGENT, url)
 
 
 def clean_html(html: str) -> str:

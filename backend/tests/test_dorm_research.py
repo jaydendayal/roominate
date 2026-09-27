@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -52,7 +53,7 @@ def test_research_dorm_returns_validated_sources(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr(main, "store", AIStore(tmp_path / "dorm.sqlite", 9, 6))
 
     async def fake_fetch(url: str, browser_fallback: bool = False) -> DormPage:
-        assert browser_fallback is True
+        assert browser_fallback is False
         return DormPage(url, "2026-09-26", "abc123", "<h1>Room</h1>", "# Room\nDimensions are 12 ft by 15 ft. Desk is 42 x 24 x 30 inches.", "http")
 
     class FakeOpenAI:
@@ -144,7 +145,46 @@ def test_research_dorm_searches_by_school_and_hall_then_caches_sources(tmp_path:
     assert second.status_code == 200
     assert second.json()["status"] == "cached"
     assert fake_openai.searches == 1
-    assert fetched == ["https://housing.example.edu/oak-hall", "https://housing.example.edu/oak-hall"]
+    # The structured result and cleaned source page are both cached on the second request.
+    assert fetched == ["https://housing.example.edu/oak-hall"]
+
+
+def test_research_dorm_fetches_independent_sources_concurrently(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "store", AIStore(tmp_path / "concurrent.sqlite", 9, 6))
+    active = 0
+    peak = 0
+
+    async def fake_fetch(url: str, browser_fallback: bool = False) -> DormPage:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return DormPage(url, "2026-09-26", url.rsplit("/", 1)[-1], "<h1>Room</h1>", "# Room\nThe room is 10 ft by 12 ft.", "http")
+
+    class FakeOpenAI:
+        enabled = True
+
+        async def structured_response(self, **kwargs):
+            return DormResearchAIResult.model_validate({
+                "schema_version": "1.0", "processing_status": "complete",
+                "college": "Example University", "residence_hall": "Oak Hall", "room_type": "Double",
+                "room_width_m": 3.048, "room_length_m": 3.6576, "room_height_m": None,
+                "room_confidence": 0.9,
+                "room_evidence": [{"source_url": "https://one.example.edu/hall", "quote": "The room is 10 ft by 12 ft."}],
+                "items": [], "uncertainties": [],
+            }), {"input_tokens": 80, "output_tokens": 40}
+
+    monkeypatch.setattr(main, "fetch_dorm_page", fake_fetch)
+    monkeypatch.setattr(main, "openai", FakeOpenAI())
+    response = TestClient(main.app).post("/api/v1/research-dorm", json={
+        "project_id": "project-demo", "college": "Example University", "residence_hall": "Oak Hall",
+        "urls": ["https://one.example.edu/hall", "https://two.example.edu/hall", "https://three.example.edu/hall"],
+    })
+
+    assert response.status_code == 200
+    assert len(response.json()["sources"]) == 3
+    assert peak == 3
 
 
 def test_research_dorm_requests_manual_links_when_search_pages_are_unusable(tmp_path: Path, monkeypatch) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import httpx
 from contextlib import asynccontextmanager
@@ -213,7 +214,14 @@ def _fallback_visual_profile(name: str | None, category: str | None = None, note
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"status": "ok", "openai_configured": openai.enabled, "amazon_creators_configured": amazon.configured, "model": settings.openai_model, "spend": store.stats()}
+    return {
+        "status": "ok",
+        "openai_configured": openai.enabled,
+        "amazon_creators_configured": amazon.configured,
+        "model": settings.openai_model,
+        "project_call_limit": settings.max_calls_per_project,
+        "spend": store.stats(),
+    }
 
 
 @app.post("/api/v1/media/normalize-heic", response_class=Response)
@@ -381,19 +389,44 @@ async def research_dorm(request: DormResearchRequest) -> dict[str, Any]:
 
     pages: list[dict[str, str]] = []
     failures: list[dict[str, str]] = []
-    for raw_url in requested_urls:
+    fetch_limit = asyncio.Semaphore(3)
+
+    async def load_page(raw_url: str, browser_fallback: bool = False) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+        if not browser_fallback and (cached_page := store.get_web_page(raw_url)):
+            return ({key: cached_page[key] for key in ("source_url", "raw_hash", "fetched_at", "fetch_method", "cleaned_text")}, None)
         try:
-            page = await fetch_dorm_page(raw_url, browser_fallback=settings.dorm_browser_fallback_enabled)
+            async with fetch_limit:
+                page = await fetch_dorm_page(raw_url, browser_fallback=browser_fallback)
             store.put_web_page(page.source_url, page.raw_hash, page.raw_html, page.cleaned_text, page.fetch_method)
-            pages.append({
+            return ({
                 "source_url": page.source_url,
                 "raw_hash": page.raw_hash,
                 "fetched_at": page.fetched_at,
                 "fetch_method": page.fetch_method,
                 "cleaned_text": page.cleaned_text,
-            })
+            }, None)
         except Exception as exc:
-            failures.append({"source_url": raw_url, "error": str(exc)[:240]})
+            return (None, {"source_url": raw_url, "error": str(exc)[:240]})
+
+    # Static reads run concurrently. Per-host spacing and robots rules are still enforced inside the
+    # reader, but slow pages no longer block unrelated sources one after another.
+    results = await asyncio.gather(*(load_page(raw_url) for raw_url in requested_urls))
+    for page, failure in results:
+        if page:
+            pages.append(page)
+        elif failure:
+            failures.append(failure)
+
+    # Starting Chromium is the slowest fallback. Pay that cost only when no static page was usable,
+    # and only for the highest-ranked source (discovered sources are already relevance-sorted).
+    if not pages and failures and settings.dorm_browser_fallback_enabled:
+        fallback_url = failures[0]["source_url"]
+        page, fallback_failure = await load_page(fallback_url, browser_fallback=True)
+        if page:
+            pages.append(page)
+            failures = [failure for failure in failures if failure["source_url"] != fallback_url]
+        elif fallback_failure:
+            failures[0] = fallback_failure
     if not pages:
         return {
             "schema_version": "1.0", "processing_status": "partial", "status": "partial",

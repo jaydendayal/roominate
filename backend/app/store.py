@@ -95,9 +95,13 @@ class AIStore:
                 (key, operation, json.dumps(value, separators=(",", ":"))),
             )
 
-    def get_web_page(self, source_url: str) -> dict[str, str] | None:
+    def get_web_page(self, source_url: str, max_age_hours: int = 24) -> dict[str, str] | None:
+        freshness = f"-{max(1, max_age_hours)} hours"
         with self._connect() as connection:
-            row = connection.execute("SELECT * FROM web_pages WHERE source_url = ?", (source_url,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM web_pages WHERE source_url = ? AND fetched_at >= datetime('now', ?)",
+                (source_url, freshness),
+            ).fetchone()
         return dict(row) if row else None
 
     def put_web_page(self, source_url: str, raw_hash: str, raw_html: str, cleaned_text: str, fetch_method: str) -> None:

@@ -12,6 +12,15 @@ def test_cache_round_trip(tmp_path: Path) -> None:
     assert store.get_cached(key) == {"value": 3}
 
 
+def test_cleaned_web_page_cache_round_trip(tmp_path: Path) -> None:
+    store = AIStore(tmp_path / "store.sqlite", total_guard_usd=1.0, max_calls_per_project=2)
+    store.put_web_page("https://housing.example.edu/hall", "hash", "<h1>Hall</h1>", "# Hall", "http")
+    page = store.get_web_page("https://housing.example.edu/hall")
+    assert page is not None
+    assert page["raw_hash"] == "hash"
+    assert page["cleaned_text"] == "# Hall"
+
+
 def test_project_call_limit(tmp_path: Path) -> None:
     store = AIStore(tmp_path / "store.sqlite", total_guard_usd=1.0, max_calls_per_project=1)
     request_id = store.reserve("project", "test", 0.1)

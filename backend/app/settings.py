@@ -49,7 +49,9 @@ def get_settings() -> Settings:
         image_detail=os.getenv("OPENAI_IMAGE_DETAIL", "low"),
         # The product has $10 total credits; $9 is callable and $1 stays reserved.
         aggregate_guard_usd=min(_float("OPENAI_AGGREGATE_SPEND_GUARD_USD", 9.0), 10.0),
-        max_calls_per_project=max(1, _int("OPENAI_MAX_CALLS_PER_PROJECT", 6)),
+        # A full workflow can legitimately use search + extraction + plan reading + product visuals +
+        # layout selection + Better Cart explanations. The aggregate dollar guard remains the hard cap.
+        max_calls_per_project=max(1, _int("OPENAI_MAX_CALLS_PER_PROJECT", 30)),
         max_estimated_call_usd=max(0.01, _float("OPENAI_MAX_ESTIMATED_CALL_USD", 0.08)),
         # Current GPT-4.1 mini standard rates as documented when this project was built.
         # Override these whenever OPENAI_MODEL changes.
