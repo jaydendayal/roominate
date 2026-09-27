@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BED_SIZES, bedProduct, bedProductId, currentBedSize, ensureProvidedBed, isRoomBedItem, ROOM_BED_ITEM_ID, setProvidedBed } from "./beds";
+import { addRoomBed, BED_SIZES, bedProduct, bedProductId, ensureProvidedBed, isRoomBedItem, removeRoomBed, ROOM_BED_ITEM_ID, roomBeds, setRoomBedSize } from "./beds";
 import { calculateIssues, purchaseSubtotal } from "./calculations";
 import { createBlankProject, createDemoProject } from "./demo";
 import { colorGroupsFor, describeColor } from "./productColors";
@@ -57,11 +57,13 @@ describe("room bed sizes", () => {
   });
 });
 
-describe("the bed that comes with the room", () => {
+const bedProductIds = (project: Project) => project.products.filter((product) => product.id.startsWith("room-bed-")).map((product) => product.id);
+
+describe("the beds that come with the room", () => {
   it("defaults new rooms to a placed Twin XL", () => {
     const project = createBlankProject();
     expect(project.room.providedBed).toBe("twin_xl");
-    expect(currentBedSize(project)).toBe("twin_xl");
+    expect(roomBeds(project).map((bed) => bed.productId)).toEqual([bedProductId("twin_xl")]);
     expect(bedOf(project)?.transform).not.toBeNull();
     expect(calculateIssues(project).some((issue) => issue.affectedItemIds.includes(ROOM_BED_ITEM_ID))).toBe(false);
   });
@@ -72,37 +74,73 @@ describe("the bed that comes with the room", () => {
     expect(calculateIssues(demo).some((issue) => issue.affectedItemIds.includes(ROOM_BED_ITEM_ID))).toBe(false);
     // The demo layout is uncluttered: nothing overlaps, crosses a wall, or blocks the door swing.
     expect(calculateIssues(demo).filter((issue) => issue.type === "fit" || issue.type === "clearance")).toEqual([]);
-    const withoutBed = setProvidedBed(demo, "none");
+    const withoutBed = removeRoomBed(demo, ROOM_BED_ITEM_ID);
     expect(purchaseSubtotal(demo)).toEqual(purchaseSubtotal(withoutBed));
     expect(shoppingListCsv(demo)).not.toContain("Twin XL bed");
   });
 
-  it("changes size in place, keeping the spot, lock, and colors", () => {
+  it("adds a matching bed for the roommate without one, in a free spot", () => {
+    const blank = createBlankProject();
+    const shared = addRoomBed(blank);
+    const beds = roomBeds(shared);
+    expect(beds).toHaveLength(2);
+    expect(new Set(beds.map((bed) => bed.id)).size).toBe(2);
+    expect(beds.map((bed) => bed.productId)).toEqual([bedProductId("twin_xl"), bedProductId("twin_xl")]);
+    expect(beds.map((bed) => bed.ownerId)).toEqual(["person-jay", "person-maya"]);
+    expect(beds[1]).toMatchObject({ acquisitionStatus: "owned", purchaseStatus: "not_purchasing" });
+    expect(bedProductIds(shared)).toEqual([bedProductId("twin_xl")]); // both beds share one product
+    expect(calculateIssues(shared).filter((issue) => issue.type === "fit" || issue.type === "clearance")).toEqual([]);
+    // The usual shared layout: the second bed mirrors the first across the room, leaving a walkway.
+    const [first, second] = beds.map((bed) => bed.transform!);
+    expect(second.position.x).toBeCloseTo(blank.room.width - first.position.x, 6);
+    expect(second.position.y).toBeCloseTo(first.position.y, 6);
+    expect(Math.abs(second.position.x - first.position.x) - bedProduct("twin_xl").dimensions.width!).toBeGreaterThan(0.6);
+    expect(purchaseSubtotal(shared)).toEqual(purchaseSubtotal(blank));
+    expect(shared.cartVersion).toBe(blank.cartVersion + 1);
+    // With everyone covered, further beds go to the room's owner.
+    expect(roomBeds(addRoomBed(shared, "full"))[2]).toMatchObject({ ownerId: "person-jay", productId: bedProductId("full") });
+  });
+
+  it("changes one bed's size in place, keeping its spot, lock, and colors", () => {
     const demo = createDemoProject();
     const styled = { ...demo, items: demo.items.map((item) => isRoomBedItem(item) ? { ...item, locked: true, colorSelection: { frame: "Cherry" } } : item) };
-    const queen = setProvidedBed(styled, "queen");
+    const queen = setRoomBedSize(styled, ROOM_BED_ITEM_ID, "queen");
     const bed = bedOf(queen)!;
     expect(bed.productId).toBe(bedProductId("queen"));
     expect(bed.transform).toEqual(bedOf(styled)!.transform);
     expect(bed.locked).toBe(true);
     expect(bed.colorSelection).toEqual({ frame: "Cherry" });
-    expect(queen.products.filter((product) => product.id.startsWith("room-bed-")).map((product) => product.id)).toEqual([bedProductId("queen")]);
+    expect(queen.items.map((item) => item.id)).toEqual(styled.items.map((item) => item.id));
+    expect(bedProductIds(queen)).toEqual([bedProductId("queen")]);
     expect(queen.room.providedBed).toBe("queen");
+
+    const shared = addRoomBed(createBlankProject());
+    const [first, second] = roomBeds(shared);
+    const mixed = setRoomBedSize(shared, second.id, "full");
+    expect(roomBeds(mixed).map((item) => item.productId)).toEqual([bedProductId("twin_xl"), bedProductId("full")]);
+    expect(roomBeds(mixed)[0]).toEqual(first);
+    expect(bedProductIds(mixed).sort()).toEqual([bedProductId("full"), bedProductId("twin_xl")].sort());
   });
 
-  it("removes the bed for rooms without one", () => {
-    const none = setProvidedBed(createDemoProject(), "none");
-    expect(bedOf(none)).toBeUndefined();
-    expect(none.products.some((product) => product.id.startsWith("room-bed-"))).toBe(false);
-    expect(currentBedSize(none)).toBe("none");
+  it("removes one bed at a time, down to none", () => {
+    const shared = addRoomBed(createBlankProject());
+    const [first, second] = roomBeds(shared);
+    const single = removeRoomBed(shared, first.id);
+    expect(roomBeds(single)).toEqual([second]);
+    expect(single.room.providedBed).toBe("twin_xl");
+    const none = removeRoomBed(single, second.id);
+    expect(roomBeds(none)).toEqual([]);
+    expect(bedProductIds(none)).toEqual([]);
+    expect(none.room.providedBed).toBe("none");
     expect(ensureProvidedBed(none)).toBe(none); // an explicit "no bed" is never overridden
+    expect(removeRoomBed(createDemoProject(), "item-desk").items.some((item) => item.id === "item-desk")).toBe(true); // only beds are removed
   });
 
   it("gives rooms saved before the setting a Twin XL once", () => {
-    const demo = setProvidedBed(createDemoProject(), "none");
+    const demo = removeRoomBed(createDemoProject(), ROOM_BED_ITEM_ID);
     const legacy: Project = { ...demo, room: { ...demo.room, providedBed: undefined } };
     const migrated = ensureProvidedBed(legacy);
-    expect(currentBedSize(migrated)).toBe("twin_xl");
+    expect(roomBeds(migrated).map((bed) => bed.productId)).toEqual([bedProductId("twin_xl")]);
     expect(migrated.cartVersion).toBe(legacy.cartVersion);
     expect(ensureProvidedBed(migrated)).toBe(migrated);
   });

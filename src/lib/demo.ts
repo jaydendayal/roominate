@@ -1,5 +1,6 @@
 import type { Item, Product, Project } from "./types";
-import { bedProduct, bedProductId, ROOM_BED_ITEM_ID, setProvidedBed } from "./beds";
+import { addRoomBed, bedProduct, bedProductId, ROOM_BED_ITEM_ID } from "./beds";
+import { DEFAULT_PRIORITIES } from "./priorities";
 import { shortlistProducts } from "./shortlist";
 
 const now = "2026-08-15T14:30:00.000Z";
@@ -217,7 +218,7 @@ export function createDemoProject(): Project {
     // $400 keeps the cart over budget after the rule and duplicate fixes, so Better Cart demonstrates a desk swap.
     budgetAmount: 40000,
     budgetCurrency: "USD",
-    priorities: ["Stay under budget", "Keep a clear entry", "Preserve workspace"],
+    priorities: [...DEFAULT_PRIORITIES],
     needs: ["workspace", "seating", "storage"],
     rules: [
       {
@@ -243,7 +244,7 @@ export function createDemoProject(): Project {
 /** A new room starts empty apart from the default Twin XL bed that comes with it. */
 export function createBlankProject(name = "Untitled room"): Project {
   const project = createDemoProject();
-  return setProvidedBed({
+  return addRoomBed({
     ...project,
     id: `project-${crypto.randomUUID()}`,
     name,
@@ -264,7 +265,7 @@ export function createBlankProject(name = "Untitled room"): Project {
     products: structuredClone(shortlistProducts),
     items: [],
     budgetAmount: 50000,
-    priorities: ["Stay under budget"],
+    priorities: [...DEFAULT_PRIORITIES],
     needs: [],
     rules: [],
     duplicateResolutions: {},

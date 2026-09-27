@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, Box, Check, Download, ListChecks, LoaderCircle, MessageSquareText, RefreshCw, RotateCcw, ShoppingBag, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Box, Check, Download, ListChecks, ListOrdered, LoaderCircle, MessageSquareText, RefreshCw, RotateCcw, ShoppingBag, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { calculateIssues, cents, productFor } from "@/lib/calculations";
+import { priorityInfo, priorityOrder } from "@/lib/priorities";
 import { applyAcceptedProposal, generateProposal } from "@/lib/proposals";
 import { downloadShoppingList } from "@/lib/shoppingList";
 import type { Issue, Project, Proposal } from "@/lib/types";
@@ -35,7 +36,7 @@ export function BetterCartPanel({ project, issues, update, captureUndo }: { proj
       const result = await apiFetch<ExplanationResponse>("/api/v1/explain-proposal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_id: project.id, priorities: project.priorities, changes: next.changes.map((change) => ({ change_id: change.id, deterministic_reason: change.reason, deterministic_impact: change.impact })), before_subtotal_cents: next.beforeSubtotal, after_subtotal_cents: next.afterSubtotal }),
+        body: JSON.stringify({ project_id: project.id, priorities: priorityOrder(project).map((id) => priorityInfo(id).label), changes: next.changes.map((change) => ({ change_id: change.id, deterministic_reason: change.reason, deterministic_impact: change.impact })), before_subtotal_cents: next.beforeSubtotal, after_subtotal_cents: next.afterSubtotal }),
       });
       if (result.status === "manual_fallback" || !result.explanations.length) {
         setExplanationStatus("Deterministic explanations used.");
@@ -57,7 +58,7 @@ export function BetterCartPanel({ project, issues, update, captureUndo }: { proj
   };
 
   if (!proposal) {
-    return <div className="better-empty-page"><div className="better-orb"><ShoppingBag size={30} strokeWidth={1.6} /></div><p className="eyebrow">Better Cart</p><h1>A calmer room starts with<br /><em>a smarter cart.</em></h1><p>Roominate will test smaller alternatives, duplicate coordination, rule-safe removals, and real placements—then explain every tradeoff.</p><div className="better-inputs"><span><Box size={17} /> {project.items.filter((item) => item.purchaseStatus === "in_cart").length} cart items</span><span><AlertTriangle size={17} /> {issues.length} current issues</span><span>{cents(project.budgetAmount)} limit</span></div><div className="header-button-row"><button className="primary-button generate-button" disabled={generating} onClick={() => void generate()}>{generating ? <LoaderCircle className="spin" size={18} /> : <ListChecks size={18} />} Generate Better Cart</button><button className="secondary-button generate-button" onClick={() => downloadShoppingList(project)}><Download size={17} /> Export current list</button></div><small>Optimization and validation run in code. AI is used only for concise explanations when configured.</small></div>;
+    return <div className="better-empty-page"><div className="better-orb"><ShoppingBag size={30} strokeWidth={1.6} /></div><p className="eyebrow">Better Cart</p><h1>A calmer room starts with<br /><em>a smarter cart.</em></h1><p>Roominate will test smaller alternatives, duplicate coordination, rule-safe removals, and real placements—then explain every tradeoff.</p><div className="better-inputs"><span><Box size={17} /> {project.items.filter((item) => item.purchaseStatus === "in_cart").length} cart items</span><span><AlertTriangle size={17} /> {issues.length} current issues</span><span>{cents(project.budgetAmount)} limit</span><span title={priorityOrder(project).map((id, index) => `${index + 1}. ${priorityInfo(id).label}`).join("\n")}><ListOrdered size={17} /> {priorityInfo(priorityOrder(project)[0]).label} first</span></div><div className="header-button-row"><button className="primary-button generate-button" disabled={generating} onClick={() => void generate()}>{generating ? <LoaderCircle className="spin" size={18} /> : <ListChecks size={18} />} Generate Better Cart</button><button className="secondary-button generate-button" onClick={() => downloadShoppingList(project)}><Download size={17} /> Export current list</button></div><small>Optimization and validation run in code. AI is used only for concise explanations when configured.</small></div>;
   }
 
   return (
