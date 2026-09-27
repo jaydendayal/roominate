@@ -1,4 +1,5 @@
 import { collidingItemIds, itemBounds, itemExceedsRoom, productFor, rotatedFootprint } from "./calculations";
+import { frontFacesWall } from "./facing";
 import { nearestWall, roomPolygon } from "./roomShape";
 import type { Item, Project, Vec2 } from "./types";
 
@@ -133,6 +134,8 @@ function candidatesFor(project: Project, item: Item, profile: LayoutProfile) {
     const ys = axisPoints(footprint.depth / 2, project.room.length - footprint.depth / 2, step);
     for (const x of xs) for (const y of ys) {
       const position = { x, y };
+      // Dressers, desks, wardrobes, and fridges never get their drawers, seat side, or door against a wall.
+      if (frontFacesWall(project.room, product, position, rotationZ)) continue;
       candidates.push({ position, rotationZ, score: candidateScore(project, item, position, rotationZ, profile) });
     }
   }

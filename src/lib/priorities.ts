@@ -13,7 +13,7 @@ export interface PriorityInfo {
 }
 
 export const PRIORITIES: PriorityInfo[] = [
-  { id: "budget", label: "Stay under budget", effect: "Closes the gap with cheaper equivalents, then defers optional items, biggest savings first." },
+  { id: "budget", label: "Stay under budget", effect: "Closes the gap with cheaper catalog equivalents that fit, closest in size first, then defers optional items, biggest savings first." },
   { id: "keep_picks", label: "Keep the products we chose", effect: "Moves items instead of swapping them for other models. Optional items can still wait." },
   { id: "even_split", label: "Keep spending even", effect: "When something has to be cut, it comes from whoever is spending more." },
 ];

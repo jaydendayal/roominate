@@ -1,14 +1,24 @@
-import { calculateIssues, cents, physicalIssues, productFor, purchaseSubtotal } from "./calculations";
+import { calculateIssues, cents, physicalIssues, placementBlocked, productFor, purchaseSubtotal } from "./calculations";
+import { frontFacesWall, hasFront } from "./facing";
 import { needInfo, type NeedId, uncoveredRequiredNeeds } from "./needs";
 import { priorityInfo, priorityOrder, ranksAbove } from "./priorities";
-import type { Issue, Item, Product, Project, Proposal, ProposalChange, Vec2 } from "./types";
+import type { Dimensions, Issue, Item, Product, Project, Proposal, ProposalChange, Vec2 } from "./types";
+import { formatDimensions } from "./units";
 
 // Better Cart: deterministic candidate generation for any project (no fixture IDs).
 // Hard constraints (confirmed rules, room geometry, locked items) are resolved first,
 // then duplicates, fit, clearance, and finally budget. Every geometric change is
-// validated with the same physical checks the app uses. The group's ranked priorities
-// decide the tradeoffs (swap or move, swap or defer, whose purchase goes first), and
-// Better Cart never defers the last item covering a required function.
+// validated with the same physical checks the app uses. Swaps draw on the whole catalog:
+// any priced, measured product of the same category (or alternative group) that fits the
+// room, ranked by whether its price fits the budget and how close it is in size to the
+// original. The group's ranked priorities decide the tradeoffs (swap or move, swap or defer,
+// whose purchase goes first), and Better Cart never defers the last item covering a
+// required function.
+
+export interface ProposalOptions {
+  /** Formats product dimensions for change text, e.g. in the viewer's units; defaults to metric. */
+  formatSize?: (dimensions: Dimensions) => string;
+}
 
 interface Placement {
   position: Vec2;
@@ -101,54 +111,118 @@ function findSafePlacement(base: Project, proposed: Project, itemId: string, pro
   const anchor = source.transform?.position ?? { x: width / 2, y: length / 2 };
   const baseRotation = source.transform?.rotationZ ?? 0;
   const step = Math.max(0.05, Math.min(0.15, Math.max(width, length) / 40));
-  const candidates: (Placement & { distance: number })[] = [];
-  for (const rotationZ of [baseRotation, baseRotation + Math.PI / 2]) {
+  // The current spot first, so a same-size replacement stays exactly where it is; the grid may miss it.
+  const keepSpot = source.transform && !frontFacesWall(world.room, product, anchor, baseRotation);
+  const candidates: (Placement & { distance: number })[] = keepSpot ? [{ position: anchor, rotationZ: baseRotation, distance: -1 }] : [];
+  // Pieces with drawers or doors may turn all the way round, so their front can face into the room from any wall.
+  const turns = hasFront(product) ? [0, 1, 2, 3] : [0, 1];
+  for (const turn of turns) {
+    const rotationZ = baseRotation + (turn * Math.PI) / 2;
     for (let x = step / 2; x < width; x += step) {
       for (let y = step / 2; y < length; y += step) {
         const position = { x: Number(x.toFixed(3)), y: Number(y.toFixed(3)) };
+        // Their drawers, doors, or seat side never face a wall.
+        if (frontFacesWall(world.room, product, position, rotationZ)) continue;
         // Small penalty for rotating so an unrotated spot wins ties.
-        candidates.push({ position, rotationZ, distance: Math.hypot(position.x - anchor.x, position.y - anchor.y) + (rotationZ === baseRotation ? 0 : 0.05) });
+        candidates.push({ position, rotationZ, distance: Math.hypot(position.x - anchor.x, position.y - anchor.y) + (turn === 0 ? 0 : 0.05 * turn) });
       }
     }
   }
   candidates.sort((a, b) => a.distance - b.distance);
   for (const { position, rotationZ } of candidates) {
-    const trial: Project = { ...world, items: world.items.map((item) => item.id === itemId ? { ...item, productId: product.id, transform: { position, rotationZ } } : item) };
-    const blocked = physicalIssues(trial).some((issue) => (issue.type === "fit" || issue.type === "clearance") && issue.affectedItemIds.includes(itemId));
-    if (!blocked) return { position, rotationZ };
+    const moved: Item = { ...source, productId: product.id, transform: { position, rotationZ } };
+    const trial: Project = { ...world, items: world.items.map((item) => item.id === itemId ? moved : item) };
+    if (!placementBlocked(trial, moved)) return { position, rotationZ };
   }
   return null;
 }
 
 interface Substitute {
+  item: Item;
   product: Product;
+  /** A collision-tested spot, once `firstPlaced` has found one; always null for an unplaced item. */
   placement: Placement | null;
   savings: number;
+  /** How far its size is from the current product's; 0 is the same size. */
+  sizeGap: number;
 }
 
-/** Equivalent products (same alternative group or category) with verified dimensions and price that fit and are permitted. */
-function substitutes(base: Project, proposed: Project, item: Item): Substitute[] {
+/** Long side, short side, and height, so a product listed depth-for-width still compares as the same size. */
+function sizeProfile({ width, depth, height }: Dimensions) {
+  return [Math.max(width!, depth!), Math.min(width!, depth!), height!];
+}
+
+/** Mean absolute log ratio of the two sizes: 0 when identical, about 0.1 when each side is about 10% off. */
+function sizeGap(current: Product, candidate: Product) {
+  if (!dimensionsKnown(current) || !dimensionsKnown(candidate)) return 0;
+  const [from, to] = [sizeProfile(current.dimensions), sizeProfile(candidate.dimensions)];
+  return from.reduce((sum, value, index) => sum + Math.abs(Math.log(to[index] / value)), 0) / from.length;
+}
+
+/** Under the ceiling, with a footprint no bigger than the room's overall extent: a cheap check before searching placements. */
+function fitsRoomExtent(project: Project, product: Product) {
+  const [long, short, height] = sizeProfile(product.dimensions);
+  const { width, length } = project.room;
+  return height <= project.room.height && long <= Math.max(width, length) && short <= Math.min(width, length);
+}
+
+const kindOf = (product: Product) => product.category.trim().toLowerCase();
+
+/**
+ * Catalog products that could stand in for `item`: the same category (or alternative group), priced,
+ * measured, permitted by confirmed rules, and within the room's extent. Placement is not searched yet.
+ */
+function substitutes(proposed: Project, item: Item): Substitute[] {
   const current = productFor(proposed, item);
   if (!current || item.purchaseStatus !== "in_cart") return [];
+  const kind = kindOf(current);
   const options: Substitute[] = [];
   for (const product of proposed.products) {
+    if (product.id === current.id || !product.price || !dimensionsKnown(product) || violatesConfirmedRule(proposed, product)) continue;
     const sameGroup = Boolean(current.alternativeGroupId && product.alternativeGroupId === current.alternativeGroupId);
-    // Built-in shortlist entries are browseable modeling references, not user-approved
-    // equivalents, unless placed in the same alternative group as the current item.
-    // Once added to the cart they still participate in every issue check.
-    if ((product.tags.includes("shortlist") && !sameGroup) || product.id === current.id || !product.price || !dimensionsKnown(product) || violatesConfirmedRule(proposed, product)) continue;
-    const equivalent = sameGroup || product.category === current.category;
-    if (!equivalent) continue;
-    const placement = item.transform ? findSafePlacement(base, proposed, item.id, product.id) : null;
-    if (item.transform && !placement) continue;
-    if (!item.transform && product.dimensions.height! > proposed.room.height) continue;
-    options.push({ product, placement, savings: lineCost(current, item) - product.price.amount * item.quantity });
+    const sameKind = Boolean(kind) && kind !== "uncategorized" && kindOf(product) === kind;
+    if (!(sameGroup || sameKind) || !fitsRoomExtent(proposed, product)) continue;
+    options.push({ item, product, placement: null, savings: lineCost(current, item) - product.price.amount * item.quantity, sizeGap: sizeGap(current, product) });
   }
-  return options.sort((a, b) => b.savings - a.savings);
+  return options;
 }
 
-function replaceChange(project: Project, item: Item, option: Substitute, reason: string): ProposalChange {
+/**
+ * The first of `ranked` with a collision-tested spot for its item (an unplaced item needs none). The
+ * placement search is the slow part, so it stops at the first that fits.
+ */
+function firstPlaced(base: Project, proposed: Project, ranked: Substitute[]): Substitute | undefined {
+  for (const option of ranked) {
+    if (!option.item.transform) return option;
+    const placement = findSafePlacement(base, proposed, option.item.id, option.product.id);
+    if (placement) return { ...option, placement };
+  }
+  return undefined;
+}
+
+/** The swap doesn't raise the cart total, or it still ends within budget. `gap` is how far over budget the cart is (negative when under). */
+const priceFits = (gap: number, option: Substitute) => option.savings >= 0 || gap - option.savings <= 0;
+
+/** For fit and rule fixes: a price that fits the budget first, then the closest size, then the cheaper. */
+const closestOrder = (gap: number) => (a: Substitute, b: Substitute) =>
+  Number(priceFits(gap, b)) - Number(priceFits(gap, a)) || a.sizeGap - b.sizeGap || b.savings - a.savings;
+
+/**
+ * For closing a budget gap: the most savings toward the gap per step away from the original size, so
+ * two close matches can beat one drastic swap. Savings past the gap count for nothing, so among swaps
+ * that close it the closest in size wins.
+ */
+const budgetOrder = (gap: number) => {
+  const value = (option: Substitute) => Math.min(option.savings, gap) / (option.sizeGap + 0.05);
+  return (a: Substitute, b: Substitute) => value(b) - value(a) || a.sizeGap - b.sizeGap || b.savings - a.savings;
+};
+
+function replaceChange(project: Project, option: Substitute, reason: string, formatSize: (dimensions: Dimensions) => string): ProposalChange {
+  const { item } = option;
   const saving = option.savings > 0 ? `Saves ${cents(option.savings)}` : option.savings < 0 ? `Costs ${cents(-option.savings)} more` : "Same price";
+  const current = productFor(project, item);
+  const size = formatSize(option.product.dimensions);
+  const sizeNote = current && dimensionsKnown(current) ? (option.sizeGap < 0.01 ? `same size (${size})` : `${size}, was ${formatSize(current.dimensions)}`) : size;
   const needs = item.needsServed.length ? `keeps ${item.needsServed.join(", ")} covered` : "same category";
   return {
     id: `change-replace-${item.id}`,
@@ -158,7 +232,7 @@ function replaceChange(project: Project, item: Item, option: Substitute, reason:
     position: option.placement?.position,
     rotationZ: option.placement?.rotationZ,
     reason,
-    impact: `${saving}; ${needs}${option.placement ? "; placement collision-tested" : "; still unplaced, so fit stays unverified"}.`,
+    impact: `${saving}; ${sizeNote}; ${needs}${option.placement ? "; placement collision-tested" : "; still unplaced, so fit stays unverified"}.`,
     confidence: option.placement || !item.transform ? "confirmed" : "uncertain",
     accepted: null,
   };
@@ -177,7 +251,7 @@ function worstFitIssue(issues: Issue[], itemId: string) {
     ?? issues.find((issue) => issue.type === "fit" && issue.affectedItemIds.includes(itemId));
 }
 
-export function generateProposal(project: Project): Proposal {
+export function generateProposal(project: Project, { formatSize = (dimensions) => formatDimensions(dimensions, "metric") }: ProposalOptions = {}): Proposal {
   const beforeIssues = calculateIssues(project);
   const changes: ProposalChange[] = [];
   const blockers: string[] = [];
@@ -192,6 +266,7 @@ export function generateProposal(project: Project): Proposal {
   };
   const deferred = (item: Item) => applyChange(proposed, { id: "", type: "defer", itemId: item.id, reason: "", impact: "", confidence: "confirmed", accepted: null });
   const keepsRequiredNeeds = (item: Item) => !requiredNeedsLost(proposed, deferred(item)).length;
+  const replace = (option: Substitute, reason: string) => push(replaceChange(proposed, option, reason, formatSize));
 
   // Priorities: may budget swap out chosen products, and does an even split outrank the biggest saving?
   const order = priorityOrder(project);
@@ -202,6 +277,12 @@ export function generateProposal(project: Project): Proposal {
     const bySavings = b.savings - a.savings;
     const bySpend = spendOf(proposed, b.item.ownerId) - spendOf(proposed, a.item.ownerId);
     return evenFirst ? bySpend || bySavings : bySavings || bySpend;
+  };
+  /** Which budget swap to take first: the best swap by `budgetOrder`, or the bigger spender's, whichever ranks higher. */
+  const swapFirst = (gap: number) => (a: Substitute, b: Substitute) => {
+    const byOption = budgetOrder(gap)(a, b);
+    const bySpend = spendOf(proposed, b.item.ownerId) - spendOf(proposed, a.item.ownerId);
+    return evenFirst ? bySpend || byOption : byOption || bySpend;
   };
   /** " Jay is spending the most ($120)." when an even split picked this owner's item. */
   const evenSplitNote = (item: Item) => {
@@ -223,9 +304,9 @@ export function generateProposal(project: Project): Proposal {
       if (item.locked) blockers.push(`${name(item)} conflicts with ${rule.label} but is locked. Unlock it in the 3D Studio to let Better Cart replace or remove it.`);
       continue;
     }
-    const swap = substitutes(project, proposed, item)[0];
+    const swap = firstPlaced(project, proposed, substitutes(proposed, item).sort(closestOrder(overBudget(proposed))));
     if (swap) {
-      push(replaceChange(proposed, item, swap, `Replace ${name(item)} with ${swap.product.name}, which ${rule.label} permits.`));
+      replace(swap, `Replace ${name(item)} with ${swap.product.name}, the closest-sized ${kindOf(swap.product) || "alternative"} that ${rule.label} permits.`);
       continue;
     }
     const after = applyChange(proposed, { id: "", type: "remove", itemId: item.id, reason: "", impact: "", confidence: "confirmed", accepted: null });
@@ -289,16 +370,18 @@ export function generateProposal(project: Project): Proposal {
     attempted.add(item.id);
     const issue = worstFitIssue(issues, item.id)!;
     const reposition = issue.id.startsWith("ceiling-") ? null : findSafePlacement(project, proposed, item.id);
-    const swaps = substitutes(project, proposed, item).filter((option) => option.placement);
+    const options = substitutes(proposed, item);
     const gap = overBudget(proposed);
-    // Over budget, and budget ranks above keeping picks: take the cheapest option that fits.
-    // Otherwise keep the chosen product if it can move.
-    const bestSwap = swaps[0];
-    const cheaperFits = Boolean(bestSwap && gap > 0 && bestSwap.savings > 0);
-    const preferSwap = bestSwap && (!reposition || (budgetSwaps && cheaperFits));
-    if (preferSwap) {
-      const why = gap > 0 && reposition ? ` It also cuts ${cents(bestSwap.savings)} while the cart is ${cents(gap)} over budget.` : "";
-      push(replaceChange(proposed, item, bestSwap, `Swap ${name(item)} for ${bestSwap.product.name}: ${fitProblem(proposed, issue, item.id)}, and the replacement fits at a collision-tested spot.${why}`));
+    // Over budget, and budget ranks above keeping picks: take a cheaper option that fits.
+    // Otherwise keep the chosen product if it can move, or swap to the closest-sized one that fits.
+    const cheaper = gap > 0 ? firstPlaced(project, proposed, options.filter((option) => option.savings > 0).sort(budgetOrder(gap))) : undefined;
+    const forBudget = budgetSwaps ? cheaper : undefined;
+    const bestSwap = forBudget ?? (reposition ? undefined : firstPlaced(project, proposed, options.sort(closestOrder(gap))));
+    if (bestSwap) {
+      const which = forBudget ? "" : `, the closest-sized ${kindOf(bestSwap.product) || "alternative"} that fits`;
+      const why = forBudget ? ` It also cuts ${cents(bestSwap.savings)} while the cart is ${cents(gap)} over budget.` : "";
+      const nowhere = !reposition && !issue.id.startsWith("ceiling-") ? ` and has no free spot anywhere in the room` : "";
+      replace(bestSwap, `Swap ${name(item)} for ${bestSwap.product.name}${which}: ${fitProblem(proposed, issue, item.id)}${nowhere}, and the replacement fits at a collision-tested spot.${why}`);
     } else if (reposition) {
       push({
         id: `change-move-${item.id}`,
@@ -306,7 +389,7 @@ export function generateProposal(project: Project): Proposal {
         itemId: item.id,
         position: reposition.position,
         rotationZ: reposition.rotationZ,
-        reason: `Move ${name(item)} to the nearest collision-free spot${reposition.rotationZ !== (item.transform?.rotationZ ?? 0) ? ", rotated 90°" : ""}: ${fitProblem(proposed, issue, item.id)} where it is now.${cheaperFits ? ` The cheaper ${bestSwap.product.name} would also fit, but you rank keeping the products you chose above the budget.` : ""}`,
+        reason: `Move ${name(item)} to the nearest collision-free spot${reposition.rotationZ !== (item.transform?.rotationZ ?? 0) ? ", rotated 90°" : ""}: ${fitProblem(proposed, issue, item.id)} where it is now.${cheaper ? ` The cheaper ${cheaper.product.name} would also fit, but you rank keeping the products you chose above the budget.` : ""}`,
         impact: "No cost change; placement collision-tested.",
         confidence: "confirmed",
         accepted: null,
@@ -328,7 +411,13 @@ export function generateProposal(project: Project): Proposal {
     const zone = proposed.room.clearanceZones.find((candidate) => candidate.id === issue.affectedGeometryIds[0]);
     const placement = findSafePlacement(project, proposed, item.id);
     if (!placement) {
-      blockers.push(`${issue.message}, and no collision-free spot outside it was found. Free up floor space or reconsider the item.`);
+      // Nowhere to move it: a different model of the same thing may still fit clear of the zone.
+      const swap = firstPlaced(project, proposed, substitutes(proposed, item).sort(closestOrder(overBudget(proposed))));
+      if (swap) {
+        replace(swap, `Swap ${name(item)} for ${swap.product.name}: there is no spot for ${name(item)} outside the ${zone?.name.toLowerCase() ?? "keep-clear area"}, and ${swap.product.name} fits clear of it.`);
+      } else {
+        blockers.push(`${issue.message}, and no collision-free spot outside it or equivalent that fits was found. Free up floor space or reconsider the item.`);
+      }
       continue;
     }
     push({
@@ -349,11 +438,15 @@ export function generateProposal(project: Project): Proposal {
   while (overBudget(proposed) > 0) {
     const gap = overBudget(proposed);
     const open = active(proposed).filter((item) => editable(item) && item.purchaseStatus === "in_cart");
-    const cheaper = budgetSwaps ? open
-      .flatMap((item) => substitutes(project, proposed, item).filter((option) => option.savings > 0 && (option.placement || !item.transform)).map((option) => ({ item, option, savings: option.savings })))
-      .sort(cutFirst)[0] : undefined;
+    const cheaper = budgetSwaps ? firstPlaced(project, proposed, open
+      .flatMap((item) => substitutes(proposed, item).filter((option) => option.savings > 0))
+      .sort(swapFirst(gap))) : undefined;
     if (cheaper) {
-      push(replaceChange(proposed, cheaper.item, cheaper.option, `Swap ${name(cheaper.item)} for ${cheaper.option.product.name} to close the ${cents(gap)} budget gap.${evenSplitNote(cheaper.item)}`));
+      const { item } = cheaper;
+      const why = cheaper.savings >= gap
+        ? `to close the ${cents(gap)} budget gap: the closest-sized cheaper ${kindOf(cheaper.product) || "alternative"} that does`
+        : `to cut into the ${cents(gap)} budget gap: of the cheaper options that fit, it saves the most for the smallest change in size`;
+      replace(cheaper, `Swap ${name(item)} for ${cheaper.product.name} ${why}.${evenSplitNote(item)}`);
       continue;
     }
     const deferrable = open.filter((item) => item.essentiality === "optional" && lineCost(productFor(proposed, item), item) > 0);
@@ -364,9 +457,12 @@ export function generateProposal(project: Project): Proposal {
     if (!optional) {
       const protectedNeeds = [...new Set(deferrable.flatMap((item) => requiredNeedsLost(proposed, deferred(item))))].map((need) => needInfo(need).label.toLowerCase());
       // Includes items already moved in this proposal: keeping picks, not the move, ruled out their swap.
-      const swapsSkipped = !budgetSwaps && active(proposed).some((item) => !item.locked && item.purchaseStatus === "in_cart" && substitutes(project, proposed, item).some((option) => option.savings > 0));
+      const skipped = budgetSwaps ? undefined : firstPlaced(project, proposed, active(proposed)
+        .filter((item) => !item.locked && item.purchaseStatus === "in_cart")
+        .flatMap((item) => substitutes(proposed, item).filter((option) => option.savings > 0))
+        .sort(swapFirst(gap)));
       const why = [
-        swapsSkipped ? `cheaper equivalents exist, but you rank “${priorityInfo("keep_picks").label}” above “${priorityInfo("budget").label}”` : "",
+        skipped ? `cheaper equivalents exist (such as ${skipped.product.name} for ${name(skipped.item)}, saving ${cents(skipped.savings)}), but you rank “${priorityInfo("keep_picks").label}” above “${priorityInfo("budget").label}”` : "",
         protectedNeeds.length ? `the remaining optional items are the only ones covering ${protectedNeeds.join(" and ")}, a required function` : "",
       ].filter(Boolean);
       blockers.push(why.length

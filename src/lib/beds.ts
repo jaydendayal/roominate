@@ -83,7 +83,7 @@ export const roomBeds = (project: Project) => project.items.filter(isRoomBedItem
  * Keeps the bed products and the room's bed setting in step with the bed items. Bed products still
  * in use are kept as they are; sizes no bed uses any more are dropped.
  */
-function syncBeds(project: Project, items: Item[]): Project {
+export function syncBeds(project: Project, items: Item[]): Project {
   const sizes = new Set(items.filter(isRoomBedItem).map((item) => bedSizeOf(item.productId)!));
   const kept = project.products.filter((product) => bedSizeOf(product.id) === null || sizes.has(bedSizeOf(product.id)!));
   const missing = [...sizes].filter((size) => !kept.some((product) => product.id === bedProductId(size))).map(bedProduct);

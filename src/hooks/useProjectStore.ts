@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ensureProvidedBed, isRoomBedItem } from "@/lib/beds";
-import { createBlankProject, createDemoProject } from "@/lib/demo";
+import { BETTER_CART_TEST_PROJECT_ID, createBetterCartTestProject, createBlankProject, createDemoProject, isBuiltInProject } from "@/lib/demo";
 import { initialProductPlacement } from "@/lib/discovery";
 import { mergeShortlistProducts } from "@/lib/shortlist";
 import type { Project } from "@/lib/types";
@@ -66,20 +66,30 @@ function removeLegacyDemoProducts(project: Project): Project {
   return { ...project, products: project.products.filter((product) => !LEGACY_DEMO_PRODUCT_IDS.has(product.id) || used.has(product.id)) };
 }
 
+/** The built-in rooms: the Maple Hall demo, then the room that exercises every Better Cart path. */
+const builtInProjects = () => [createDemoProject(), createBetterCartTestProject()];
+
+/** Adds the Better Cart test room to projects saved before it existed, right after the demo. */
+function withBetterCartTestRoom(projects: Project[]): Project[] {
+  if (projects.some((project) => project.id === BETTER_CART_TEST_PROJECT_ID)) return projects;
+  const at = projects.findIndex((project) => project.id === "project-demo") + 1;
+  return [...projects.slice(0, at), createBetterCartTestProject(), ...projects.slice(at)];
+}
+
 function loadProjects(): Project[] {
-  if (typeof window === "undefined") return [createDemoProject()];
+  if (typeof window === "undefined") return builtInProjects();
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [createDemoProject()];
+    if (!raw) return builtInProjects();
     const parsed = JSON.parse(raw) as PersistedState;
-    return parsed.projects?.length ? parsed.projects.map((project) => migrateProjectAxes(removeLegacyDemoProducts(project))) : [createDemoProject()];
+    return parsed.projects?.length ? withBetterCartTestRoom(parsed.projects.map((project) => migrateProjectAxes(removeLegacyDemoProducts(project)))) : builtInProjects();
   } catch {
-    return [createDemoProject()];
+    return builtInProjects();
   }
 }
 
 export function useProjectStore() {
-  const [projects, setProjects] = useState<Project[]>([createDemoProject()]);
+  const [projects, setProjects] = useState<Project[]>(builtInProjects);
   const [hydrated, setHydrated] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -139,10 +149,7 @@ export function useProjectStore() {
   }, []);
 
   const resetDemo = useCallback(() => {
-    setProjects((current) => {
-      const rest = current.filter((project) => project.id !== "project-demo");
-      return [createDemoProject(), ...rest];
-    });
+    setProjects((current) => [...builtInProjects(), ...current.filter((project) => !isBuiltInProject(project.id))]);
   }, []);
 
   const importProject = useCallback((project: Project) => {

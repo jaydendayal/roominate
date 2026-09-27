@@ -79,6 +79,30 @@ test("3D Studio exposes the door as a perimeter-editable room feature", async ({
   await expect(page.getByRole("heading", { name: "Door 2" })).toBeVisible();
 });
 
+test("Better Cart test room swaps in catalog alternatives that fit and ends under budget", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific walkthrough");
+  await page.getByRole("button", { name: "Open Better Cart test · Birch Attic 3B" }).click();
+  await expect(page.getByRole("heading", { name: "In the room" })).toBeVisible();
+  await page.getByRole("button", { name: "Better Cart" }).first().click();
+  await page.getByRole("button", { name: "Generate Better Cart" }).click();
+  await expect(page.getByRole("heading", { name: "Choose what to apply" })).toBeVisible();
+
+  for (const swap of [
+    "Upstreman 3.2 cu ft Mini Fridge with Freezer → Frigidaire Mini Personal Fridge, 10 L",
+    "HAUGA wardrobe → KLEPPSTAD 3-door wardrobe",
+    "KIVIK sofa → GLOSTAD",
+    "LAGKAPTEN / ALEX → LAGKAPTEN / ADILS",
+  ]) await expect(page.getByRole("heading", { name: swap })).toBeVisible();
+  await expect(page.getByText(/no free spot anywhere in the room/)).toBeVisible();
+
+  const acceptButtons = page.getByRole("button", { name: "Accept", exact: true });
+  await expect(acceptButtons).toHaveCount(6);
+  for (let index = 0; index < 6; index += 1) await acceptButtons.nth(index).click();
+  await page.getByRole("button", { name: "Apply accepted changes" }).click();
+  await expect(page.getByRole("button", { name: "Generate Better Cart" })).toBeVisible();
+  await expect(page.getByText("$80.07 left")).toBeVisible();
+});
+
 test("AI layout generation selects a collision-tested whole-room candidate", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific layout flow");
   await page.route("**/api/v1/recommend-layout", (route) => {
