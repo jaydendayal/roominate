@@ -5,6 +5,7 @@ import { useMemo, useRef, useState } from "react";
 import { AlertTriangle, CircleDollarSign, Copy, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { calculateIssues, cents, featureWall, itemHasConflict, productFor, purchaseSubtotal } from "@/lib/calculations";
+import { roomPolygon } from "@/lib/roomShape";
 import type { Issue, Project } from "@/lib/types";
 import { Brand } from "./Brand";
 import type { DioramaTarget, ProjectTarget } from "./HomeDiorama";
@@ -15,39 +16,43 @@ const HomeDiorama = dynamic(() => import("./HomeDiorama"), {
   loading: () => <p className="diorama-loading">Building the model…</p>,
 });
 
-/** The room in plan, drawn from its real dimensions, features, keep-clear zones, and placed items. */
+/** The room in plan, north up, drawn from its real dimensions and shape, features, keep-clear zones, and placed items. */
 function PlanThumbnail({ project, issues }: { project: Project; issues: Issue[] }) {
   const { width, length } = project.room;
   const pad = Math.max(width, length) * 0.06;
+  const outline = roomPolygon(project.room).map((point) => `${point.x},${point.y}`).join(" ");
   return (
     <svg className="plan-thumb" viewBox={`${-pad} ${-pad} ${width + pad * 2} ${length + pad * 2}`} aria-hidden="true">
-      <rect className="plan-floor" width={width} height={length} />
-      {project.room.clearanceZones.map((zone) => (
-        <rect key={zone.id} className="plan-zone" x={zone.position.x - zone.width / 2} y={zone.position.y - zone.depth / 2} width={zone.width} height={zone.depth} />
-      ))}
-      {project.items.map((item) => {
-        const dimensions = productFor(project, item)?.dimensions;
-        if (!item.transform || item.purchaseStatus === "deferred" || dimensions?.width == null || dimensions.depth == null) return null;
-        const { x, y } = item.transform.position;
-        const state = itemHasConflict(issues, item.id) ? "conflict" : item.acquisitionStatus === "owned" ? "owned" : "planned";
-        return (
-          <rect
-            key={item.id}
-            className={`plan-item ${state}`}
-            x={x - dimensions.width / 2}
-            y={y - dimensions.depth / 2}
-            width={dimensions.width}
-            height={dimensions.depth}
-            transform={`rotate(${(item.transform.rotationZ * 180) / Math.PI} ${x} ${y})`}
-          />
-        );
-      })}
-      <rect className="plan-walls" width={width} height={length} />
-      {project.room.features.map((feature) => {
-        const wall = featureWall(feature, project);
-        const [w, d] = wall === "east" || wall === "west" ? [Math.max(feature.depth, 0.1), feature.width] : [feature.width, Math.max(feature.depth, 0.1)];
-        return <rect key={feature.id} className={`plan-feature ${feature.kind}`} x={feature.position.x - w / 2} y={feature.position.y - d / 2} width={w} height={d} />;
-      })}
+      {/* Room Y runs north, SVG y runs down: flip so the plan reads like the drawing it came from. */}
+      <g transform={`matrix(1 0 0 -1 0 ${length})`}>
+        <polygon className="plan-floor" points={outline} />
+        {project.room.clearanceZones.map((zone) => (
+          <rect key={zone.id} className="plan-zone" x={zone.position.x - zone.width / 2} y={zone.position.y - zone.depth / 2} width={zone.width} height={zone.depth} />
+        ))}
+        {project.items.map((item) => {
+          const dimensions = productFor(project, item)?.dimensions;
+          if (!item.transform || item.purchaseStatus === "deferred" || dimensions?.width == null || dimensions.depth == null) return null;
+          const { x, y } = item.transform.position;
+          const state = itemHasConflict(issues, item.id) ? "conflict" : item.acquisitionStatus === "owned" ? "owned" : "planned";
+          return (
+            <rect
+              key={item.id}
+              className={`plan-item ${state}`}
+              x={x - dimensions.width / 2}
+              y={y - dimensions.depth / 2}
+              width={dimensions.width}
+              height={dimensions.depth}
+              transform={`rotate(${(item.transform.rotationZ * 180) / Math.PI} ${x} ${y})`}
+            />
+          );
+        })}
+        <polygon className="plan-walls" points={outline} />
+        {project.room.features.map((feature) => {
+          const wall = featureWall(feature, project);
+          const [w, d] = wall === "east" || wall === "west" ? [Math.max(feature.depth, 0.1), feature.width] : [feature.width, Math.max(feature.depth, 0.1)];
+          return <rect key={feature.id} className={`plan-feature ${feature.kind}`} x={feature.position.x - w / 2} y={feature.position.y - d / 2} width={w} height={d} />;
+        })}
+      </g>
     </svg>
   );
 }

@@ -102,9 +102,15 @@ export interface PaletteSwatch {
 
 export interface Room {
   id: string;
+  /** Overall width (X) and length (Y): the bounding box of the floor when it has a traced outline. */
   width: number;
   length: number;
   height: number;
+  /**
+   * Floor outline traced from a plan, counter-clockwise, as fractions of `width` (x) and `length` (y),
+   * so editing either dimension stretches the shape. Omitted means a plain width × length rectangle.
+   */
+  outline?: Vec2[];
   dimensionEvidence: Record<"width" | "length" | "height", Evidence>;
   mediaAssets: MediaAsset[];
   features: RoomFeature[];

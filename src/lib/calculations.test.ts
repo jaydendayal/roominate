@@ -92,6 +92,20 @@ describe("Roominate deterministic engines", () => {
     expect(itemExceedsRoom(project, item(project, "item-chair"))).toBe(false);
   });
 
+  it("checks placement against a traced L-shaped outline, not just the bounding box", () => {
+    const project = createDemoProject();
+    // The demo room with its north-east corner missing.
+    project.room.outline = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 0.6 }, { x: 0.6, y: 0.6 }, { x: 0.6, y: 1 }, { x: 0, y: 1 }];
+    const place = (position: { x: number; y: number }) => {
+      project.items = project.items.map((candidate) => candidate.id === "item-chair" ? { ...candidate, transform: { ...candidate.transform!, position } } : candidate);
+      return calculateIssues(project).map((issue) => issue.id);
+    };
+    expect(place({ x: 3.1, y: 2.4 })).toContain("boundary-item-chair");
+    expect(itemExceedsRoom(project, item(project, "item-chair"))).toBe(true);
+    expect(place({ x: 1, y: 2.3 })).not.toContain("boundary-item-chair");
+    expect(itemExceedsRoom(project, item(project, "item-chair"))).toBe(false);
+  });
+
   it("applies individually accepted proposal changes", () => {
     const project = createDemoProject();
     const proposal = generateProposal(project);
