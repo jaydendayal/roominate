@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BedDouble, Box, ChevronRight, Eye, Grid3X3, LoaderCircle, Lock, Maximize2, Move3D, PackagePlus, Redo2, RotateCw, ScanLine, ShoppingCart, Sparkles, Undo2, Unlock } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BedDouble, Box, ChevronRight, Eye, Grid3X3, LoaderCircle, Lock, Maximize2, Move3D, PackagePlus, Redo2, RotateCw, ScanLine, ShoppingCart, Sparkles, Trash2, Undo2, Unlock } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { MAX_BED_LOFT_METERS } from "@/lib/beds";
 import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/calculations";
-import { applyItemPatch, nextEdit, recordEdit, redoEdit, undoEdit, type ItemEdit, type ItemHistory, type ItemPatch } from "@/lib/itemHistory";
+import { applyItemPatch, nextEdit, recordEdit, recordRemoval, redoEdit, removeItem, undoEdit, type ItemEdit, type ItemHistory, type ItemPatch } from "@/lib/itemHistory";
 import { arrowAxis, isArrowKey, verticalKey } from "@/lib/keyboardMoves";
 import { layoutResultMessage, recommendLayout } from "@/lib/layoutRecommendation";
 import { snapItemPlacement } from "@/lib/snap";
@@ -14,6 +14,8 @@ import { ColorChoicePicker } from "../ColorChoicePicker";
 import { LengthInput } from "../LengthInput";
 import { personTone } from "../personTones";
 import { RoomCanvas } from "../RoomCanvas";
+
+const CONTROLS_HELP = "Drag to move · purple ring rotates · blue arrow lifts · arrow keys move · + / − raise and lower";
 
 export function StudioPanel({
   project,
@@ -52,10 +54,21 @@ export function StudioPanel({
     update((current) => applyItemPatch(current, itemId, patch));
   };
 
+  // Removing an item asks first; this holds the id of the item awaiting confirmation.
+  const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
+  const removeSelected = () => {
+    if (!selected || selected.locked || viewOnly) return;
+    onHistoryChange((current) => recordRemoval(current, project, selected.id));
+    update((current) => removeItem(current, selected.id));
+    setPendingRemoveId(null);
+    setSelectedId(null);
+  };
+
   const undoTarget = nextEdit(history, project, "undo");
   const redoTarget = nextEdit(history, project, "redo");
   const describe = (edit: ItemEdit | null) => {
-    const item = edit && project.items.find((candidate) => candidate.id === edit.itemId);
+    // A removed item is no longer in the project, so its name comes from the saved copy.
+    const item = edit && (project.items.find((candidate) => candidate.id === edit.itemId) ?? edit.removed?.item);
     const name = item ? productFor(project, item)?.name ?? "item" : "";
     return edit ? `${edit.label.toLowerCase()} ${name}` : "";
   };
@@ -270,8 +283,14 @@ export function StudioPanel({
           cutaway={cutaway}
           viewCommand={viewCommand}
           screenRightRef={screenRightRef}
+          legend={<div className="viewport-legend">
+            <span><i className="legend-finish" /> Chosen product colors</span>
+            <span><i className="legend-conflict" /> Conflict</span>
+            <span><i className="legend-outside" /> Outside room</span>
+            {/* The full controls text shows on hover and to screen readers, keeping the bar to one line. */}
+            <span className="legend-controls" tabIndex={0} title={CONTROLS_HELP} aria-label={`Controls: ${CONTROLS_HELP}`}><Move3D size={14} /> Controls</span>
+          </div>}
         />
-        <div className="viewport-legend"><span><i className="legend-finish" /> Chosen product colors</span><span><i className="legend-conflict" /> Conflict</span><span><i className="legend-outside" /> Outside room</span><span><Move3D size={14} /> Drag to move · purple ring rotates · blue arrow lifts · arrow keys move · + / − raise and lower</span></div>
       </section>
 
       <section className="studio-inspector panel-surface">
@@ -316,9 +335,21 @@ export function StudioPanel({
             <p className="key-hint"><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move on screen · <kbd>+</kbd><kbd>−</kbd> raise / lower · {stepLabel} per press</p>
             <div className="button-pair">
               <button className="secondary-button" disabled={selected.locked} onClick={rotateSelected}><RotateCw size={16} /> Rotate 90°</button>
-              <button className="secondary-button" disabled={selected.locked} onClick={() => changeItem(selected.id, { transform: null })}>Unplace</button>
+              <button className="secondary-button danger-outline" disabled={selected.locked || viewOnly} title={selected.locked ? "Unlock this item to remove it" : "Remove this item from the room"} aria-expanded={pendingRemoveId === selected.id} onClick={() => setPendingRemoveId(selected.id)}><Trash2 size={16} /> Remove</button>
             </div>
-            {selected.locked && <div className="info-note">Locked: dragging, lifting, typed positions, nudges, rotating, and unplacing are off for this item, and Better Cart won’t change it. Unlock it above to edit.</div>}
+            {pendingRemoveId === selected.id && (
+              <div className="delete-confirm" role="alertdialog" aria-labelledby={`remove-${selected.id}`} onKeyDown={(event) => { if (event.key === "Escape") setPendingRemoveId(null); }}>
+                <p id={`remove-${selected.id}`}>
+                  <strong>Remove {selectedProduct.name}?</strong>
+                  It&rsquo;s taken out of the 3D room and the In the room list{selected.purchaseStatus === "in_cart" ? ", and out of the group cart" : ""}. You can undo this.
+                </p>
+                <div>
+                  <button type="button" className="secondary-button compact-button" autoFocus onClick={() => setPendingRemoveId(null)}>Cancel</button>
+                  <button type="button" className="danger-button compact-button" onClick={removeSelected}><Trash2 size={14} /> Remove</button>
+                </div>
+              </div>
+            )}
+            {selected.locked && <div className="info-note">Locked: dragging, lifting, typed positions, nudges, rotating, and removing are off for this item, and Better Cart won’t change it. Unlock it above to edit.</div>}
             {selectedIssues.length > 0 ? <div className="selected-issues">{selectedIssues.map((issue) => <button key={issue.id} onClick={onOpenIssues}><AlertTriangle size={16} /><span><strong>{issue.message}</strong><small>{issue.detail}</small></span><ChevronRight size={15} /></button>)}</div> : <div className="success-note"><span><Box size={16} /></span> No confirmed placement conflicts</div>}
           </div>
         ) : (

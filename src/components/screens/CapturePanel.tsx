@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, ArrowRight, BedDouble, Check, DoorOpen, DraftingCompass, LoaderCircle, Palette, Plus, Ruler, Sparkles, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, ArrowRight, BedDouble, Check, DoorOpen, DraftingCompass, LoaderCircle, Plus, Ruler, Sparkles, Trash2, Upload } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { addRoomBed, BED_SIZES, bedProduct, bedSizeOf, DEFAULT_BED_SIZE, isRoomBedItem, MAX_BED_LOFT_METERS, removeRoomBed, roomBeds, setRoomBedSize } from "@/lib/beds";
 import { calculateIssues, productFor } from "@/lib/calculations";
@@ -319,11 +319,6 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
         <section className="capture-preview viewport-card">
           <div className="preview-heading"><div><p className="eyebrow">Live scaled preview</p><h2>{units.formatLength(project.room.width)} × {units.formatLength(project.room.length)} × {units.formatLength(project.room.height)}{shaped ? " · traced shape" : ""}</h2><small>{project.room.features.length ? `${project.room.features.length} structural feature${project.room.features.length === 1 ? "" : "s"} modeled` : "Add openings manually or from an uploaded floor-plan diagram."}</small></div><div className="capture-preview-actions">{scaleConfirmed ? <span className="source-chip confirmed"><Check size={13} /> measured shell</span> : <span className="source-chip uncertain"><AlertTriangle size={13} /> estimated shell</span>}<button className="secondary-button small" disabled={layoutLoading} onClick={() => void regenerateLayout()}>{layoutLoading ? <LoaderCircle className="spin" size={14} /> : <Sparkles size={14} />} Generate optimal layout</button></div></div>
           <div className="capture-canvas"><RoomCanvas project={project} issues={issues} cutaway compact viewCommand={{ type: "reset", nonce: project.room.geometryVersion }} /></div>
-          <div className="palette-bar">
-            <span><Palette size={16} /> Room palette</span>
-            <div>{project.room.palette.map((swatch) => <label key={swatch.id} title={`${swatch.label} · ${swatch.source}`}><input type="color" value={swatch.hex} onChange={(event) => updateRoom({ palette: project.room.palette.map((candidate) => candidate.id === swatch.id ? { ...candidate, hex: event.target.value } : candidate) })} /><i style={{ background: swatch.hex }} /></label>)}<button className="swatch-add" title="Add color" onClick={() => updateRoom({ palette: [...project.room.palette, { id: `swatch-${crypto.randomUUID()}`, hex: "#d5c6ad", label: "manual color", source: "manual selection", pinned: false }] })}><Plus size={15} /></button></div>
-            <small>Suggestions only; lighting can shift appearance.</small>
-          </div>
         </section>
       </div>
       {planScanOpen && <FloorPlanScan room={project.room} projectId={project.id} onClose={() => setPlanScanOpen(false)} onApply={applyFloorPlan} />}

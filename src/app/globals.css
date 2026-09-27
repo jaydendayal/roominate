@@ -151,6 +151,8 @@ input, select { color: var(--ink); }
 .project-actions .primary-button { flex: 1; }
 .danger-button { border: 1px solid var(--danger); border-radius: var(--radius-sm); min-height: 32px; padding: 0 11px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 600; font-size: 13px; background: var(--danger); color: var(--paper); }
 .danger-button:hover { background: var(--danger-ink); }
+.secondary-button.danger-outline { color: var(--danger-ink); border-color: var(--danger); }
+.secondary-button.danger-outline:hover:not(:disabled) { background: var(--danger-soft); }
 .delete-confirm { margin-top: 14px; border: 1px solid var(--danger); background: var(--danger-soft); border-radius: var(--radius-sm); padding: 11px; }
 .delete-confirm p { margin: 0 0 10px; font-size: 12px; line-height: 1.45; color: var(--danger-ink); }
 .delete-confirm p strong { display: block; color: var(--ink); font-size: 13px; margin-bottom: 2px; }
@@ -251,9 +253,12 @@ input, select { color: var(--ink); }
 .viewport-button.active { background: var(--ink); border-color: var(--ink); color: var(--paper); }
 .viewport-button:disabled { opacity: .45; cursor: default; border-color: var(--line-strong); }
 .history-buttons { display: flex; gap: 5px; margin-right: 6px; padding-right: 11px; border-right: 1px solid var(--line-strong); }
-.viewport-legend { position: absolute; bottom: 11px; left: 11px; max-width: calc(100% - 330px); z-index: 5; background: rgba(244, 243, 247, .94); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 11.5px; color: var(--muted); }
+.viewport-legend { flex: 0 1 auto; min-width: 0; background: rgba(244, 243, 247, .94); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 11.5px; color: var(--muted); }
 .room-canvas { position: relative; width: 100%; height: 100%; }
-.grid-scale { position: absolute; bottom: 11px; right: 11px; z-index: 5; background: rgba(244, 243, 247, .95); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 6px 7px 6px 9px; display: flex; flex-direction: column; align-items: stretch; gap: 6px; max-width: calc(100% - 22px); font-size: 11.5px; font-weight: 600; color: var(--ink); }
+/* Bottom bar over the 3D view: the legend on the left and the grid/units settings on the right, wrapping onto two lines instead of overlapping. */
+.canvas-footer { position: absolute; left: 11px; right: 11px; bottom: 11px; z-index: 5; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; pointer-events: none; }
+.canvas-footer > * { pointer-events: auto; }
+.grid-scale { flex: 0 1 auto; margin-left: auto; background: rgba(244, 243, 247, .95); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 6px 7px 6px 9px; display: flex; flex-direction: column; align-items: stretch; gap: 6px; max-width: 100%; font-size: 11.5px; font-weight: 600; color: var(--ink); }
 .grid-scale label { display: flex; align-items: center; gap: 5px; }
 .grid-scale select { height: 26px; border: 1px solid var(--line-strong); border-radius: 3px; background: var(--field); padding: 0 4px; font-size: 12px; font-weight: 600; }
 .grid-scale-row { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 7px; }
@@ -262,6 +267,16 @@ input, select { color: var(--ink); }
 .snap-toggle input, .step-toggle input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var(--ink); cursor: pointer; }
 .step-toggle { display: flex; align-items: center; gap: 5px; padding-left: 8px; border-left: 1px solid var(--line); white-space: nowrap; }
 .step-toggle input[type="number"] { width: 56px; height: 26px; border: 1px solid var(--line-strong); border-radius: 3px; background: var(--field); padding: 0 5px; font-size: 12px; font-weight: 600; }
+/* 3D Studio: the legend and the settings share one compact card, sized to its content and on one line
+   when it fits; the settings wrap under the legend only in a narrow view. */
+.canvas-footer.with-legend { right: auto; max-width: calc(100% - 22px); align-items: center; gap: 5px 16px; padding: 5px 10px; background: rgba(244, 243, 247, .95); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); pointer-events: auto; }
+.canvas-footer.with-legend .viewport-legend { background: none; border: 0; padding: 0; gap: 10px; flex-wrap: wrap; white-space: nowrap; }
+/* Every setting is its own piece: they pack left to right and wrap flush-left, with no dividers or
+   indents, so a narrow view takes as few lines as the controls need. */
+.canvas-footer.with-legend .grid-scale { flex: 1 1 auto; background: none; border: 0; border-radius: 0; margin-left: 0; padding: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 5px 12px; }
+.canvas-footer.with-legend .grid-scale-row { display: contents; }
+.canvas-footer.with-legend .step-toggle { border-left: 0; padding-left: 0; }
+.legend-controls { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
 .nudge-row { display: grid; grid-template-columns: auto repeat(4, 1fr); gap: 5px; align-items: center; margin: 0 0 10px; }
 .nudge-row > span { font: 400 11px var(--font-mono); color: var(--muted); white-space: nowrap; }
 .nudge-row button { min-height: 32px; padding: 0 4px; gap: 3px; font-size: 11.5px; }
@@ -481,14 +496,6 @@ input, select { color: var(--ink); }
 .source-chip.confirmed { color: var(--ok-ink); background: var(--ok-soft); }
 .source-chip.uncertain { color: var(--warn-ink); background: var(--warn-soft); }
 .capture-canvas { height: 430px; }
-.palette-bar { min-height: 59px; background: var(--paper); border-top: 1px solid var(--line); padding: 10px 15px; display: grid; grid-template-columns: auto auto 1fr; gap: 16px; align-items: center; }
-.palette-bar > span { display: flex; gap: 7px; align-items: center; font-size: 12.5px; font-weight: 600; }
-.palette-bar > div { display: flex; gap: 7px; }
-.palette-bar label { position: relative; }
-.palette-bar input { position: absolute; opacity: 0; width: 0; }
-.palette-bar i, .swatch-add { width: 28px; height: 28px; display: grid; border-radius: 3px; border: 2px solid var(--paper); box-shadow: 0 0 0 1px var(--line-strong); }
-.swatch-add { place-items: center; background: var(--field); color: var(--muted); }
-.palette-bar small { text-align: right; color: var(--muted); font-size: 11px; }
 
 /* Products */
 .segment-tabs { display: flex; gap: 0; margin-bottom: 16px; overflow-x: auto; border-bottom: 1px solid var(--line-strong); }
@@ -824,7 +831,6 @@ input, select { color: var(--ink); }
 
 @media (max-width: 1180px) {
   .studio-layout { grid-template-columns: 210px minmax(380px, 1fr) 256px; }
-  .viewport-legend { bottom: 50px; max-width: calc(100% - 22px); }
   .proposal-grid { grid-template-columns: 1fr; }
   .proposal-preview { min-height: 480px; }
   .proposal-canvas { height: 420px; }
@@ -885,8 +891,7 @@ input, select { color: var(--ink); }
   .viewport-button span { display: none; }
   .viewport-button { padding: 0 9px; }
   .view-badge { font-size: 11px; }
-  .viewport-legend { bottom: 50px; left: 7px; max-width: calc(100% - 14px); }
-  .grid-scale { bottom: 7px; right: 7px; }
+  .canvas-footer { left: 7px; right: 7px; bottom: 7px; }
   .viewport-legend span:nth-child(-n+3) { display: none; }
   .home-page { padding: 0 16px 40px; }
   .home-header { height: 64px; }
@@ -909,8 +914,6 @@ input, select { color: var(--ink); }
   .dimension-field { grid-template-columns: 1fr; }
   .capture-canvas { height: 360px; }
   .capture-preview { min-height: 425px; }
-  .palette-bar { grid-template-columns: auto 1fr; }
-  .palette-bar small { display: none; }
   .feature-row { grid-template-columns: 1fr auto; }
   .feature-row > small { grid-column: 1 / -1; grid-row: 2; }
   .feature-row .feature-actions { grid-column: 2; grid-row: 1 / 3; }

@@ -1,4 +1,5 @@
 import { calculateIssues, cents, physicalIssues, productFor, purchaseSubtotal } from "./calculations";
+import { frontFacesWall, hasFront } from "./facing";
 import { needInfo, type NeedId, uncoveredRequiredNeeds } from "./needs";
 import { priorityInfo, priorityOrder, ranksAbove } from "./priorities";
 import type { Issue, Item, Product, Project, Proposal, ProposalChange, Vec2 } from "./types";
@@ -102,12 +103,17 @@ function findSafePlacement(base: Project, proposed: Project, itemId: string, pro
   const baseRotation = source.transform?.rotationZ ?? 0;
   const step = Math.max(0.05, Math.min(0.15, Math.max(width, length) / 40));
   const candidates: (Placement & { distance: number })[] = [];
-  for (const rotationZ of [baseRotation, baseRotation + Math.PI / 2]) {
+  // Pieces with drawers or doors may turn all the way round, so their front can face into the room from any wall.
+  const turns = hasFront(product) ? [0, 1, 2, 3] : [0, 1];
+  for (const turn of turns) {
+    const rotationZ = baseRotation + (turn * Math.PI) / 2;
     for (let x = step / 2; x < width; x += step) {
       for (let y = step / 2; y < length; y += step) {
         const position = { x: Number(x.toFixed(3)), y: Number(y.toFixed(3)) };
+        // Their drawers, doors, or seat side never face a wall.
+        if (frontFacesWall(world.room, product, position, rotationZ)) continue;
         // Small penalty for rotating so an unrotated spot wins ties.
-        candidates.push({ position, rotationZ, distance: Math.hypot(position.x - anchor.x, position.y - anchor.y) + (rotationZ === baseRotation ? 0 : 0.05) });
+        candidates.push({ position, rotationZ, distance: Math.hypot(position.x - anchor.x, position.y - anchor.y) + (turn === 0 ? 0 : 0.05 * turn) });
       }
     }
   }
