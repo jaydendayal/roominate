@@ -1,9 +1,11 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { BookOpenCheck, Box, Check, CircleDollarSign, Lock, Plus, ShieldCheck, Trash2, Unlock, UserPlus, Users } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, BookOpenCheck, Box, Check, CircleDollarSign, Lock, Plus, ShieldCheck, Trash2, Unlock, UserPlus, Users } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { cents, productFor, purchaseSubtotal } from "@/lib/calculations";
+import { type NeedId, NEEDS, needInfo, requiredNeeds, uncoveredRequiredNeeds } from "@/lib/needs";
+import { type PriorityId, priorityInfo, priorityOrder } from "@/lib/priorities";
 import type { HousingRule, Product, Project } from "@/lib/types";
 import { fromUnit } from "@/lib/units";
 import { personTone } from "../personTones";
@@ -12,12 +14,26 @@ export function ConstraintsPanel({ project, update }: { project: Project; update
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [ruleOpen, setRuleOpen] = useState(false);
   const [personName, setPersonName] = useState("");
+  // Raw budget text while the field has focus, so it can be cleared and retyped without a stuck 0.
+  const [budgetDraft, setBudgetDraft] = useState<string | null>(null);
   const subtotal = purchaseSubtotal(project);
   const units = useUnitPreferences();
+  const priorities = priorityOrder(project);
+  const needs = requiredNeeds(project);
+  const uncovered = uncoveredRequiredNeeds(project);
 
   const mutate = (updater: (current: Project) => Project) => update((current) => {
     const next = updater(current);
     return { ...next, cartVersion: current.cartVersion + 1, proposal: current.proposal ? { ...current.proposal, stale: true } : null };
+  });
+
+  const movePriority = (id: PriorityId, step: -1 | 1) => mutate((current) => {
+    const order = priorityOrder(current);
+    const from = order.indexOf(id);
+    const to = from + step;
+    if (to < 0 || to >= order.length) return current;
+    [order[from], order[to]] = [order[to], order[from]];
+    return { ...current, priorities: order };
   });
 
   const addInventory = (event: FormEvent<HTMLFormElement>) => {
@@ -73,23 +89,59 @@ export function ConstraintsPanel({ project, update }: { project: Project; update
         <section className="panel-surface constraint-card budget-constraint">
           <div className="constraint-icon amber"><CircleDollarSign size={20} /></div>
           <div className="constraint-head"><div><h2>Spending limit</h2><p>USD · shipping and tax entered separately</p></div><span className={subtotal.amount > project.budgetAmount ? "warn-text" : "good-text"}>{subtotal.amount > project.budgetAmount ? `${cents(subtotal.amount - project.budgetAmount)} over` : `${cents(project.budgetAmount - subtotal.amount)} left`}</span></div>
-          <label className="large-money-input"><span>$</span><input aria-label="Budget amount" type="number" min="0" step="25" value={project.budgetAmount / 100} onChange={(event) => mutate((current) => ({ ...current, budgetAmount: Math.max(0, Math.round(Number(event.target.value) * 100)) }))} /><small>group maximum</small></label>
+          <label className="large-money-input"><span>$</span><input
+            aria-label="Budget amount"
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="25"
+            value={budgetDraft ?? project.budgetAmount / 100}
+            onFocus={() => setBudgetDraft(String(project.budgetAmount / 100))}
+            onBlur={() => setBudgetDraft(null)}
+            onChange={(event) => {
+              const text = event.target.value;
+              setBudgetDraft(text);
+              const dollars = Number(text);
+              if (text.trim() !== "" && Number.isFinite(dollars) && dollars >= 0) mutate((current) => ({ ...current, budgetAmount: Math.round(dollars * 100) }));
+            }}
+          /><small>group maximum</small></label>
           <div className="budget-track large"><span style={{ width: `${Math.min(100, (subtotal.amount / project.budgetAmount) * 100)}%` }} /></div>
           <div className="constraint-metric"><span>Known cart subtotal</span><strong>{cents(subtotal.amount)}{!subtotal.complete && "+"}</strong></div>
         </section>
 
         <section className="panel-surface constraint-card">
           <div className="constraint-icon green"><Check size={20} /></div>
-          <div className="constraint-head"><div><h2>Priorities & needs</h2><p>Used to rank Better Cart tradeoffs</p></div></div>
-          <div className="tag-editor">
-            {project.priorities.map((priority) => <span key={priority}>{priority}<button onClick={() => mutate((current) => ({ ...current, priorities: current.priorities.filter((candidate) => candidate !== priority) }))}>×</button></span>)}
-            <button onClick={() => { const value = window.prompt("Add a priority"); if (value) mutate((current) => ({ ...current, priorities: [...current.priorities, value] })); }}><Plus size={14} /> Add priority</button>
-          </div>
+          <div className="constraint-head"><div><h2>Priorities & needs</h2><p>Better Cart follows these whenever it has to choose</p></div></div>
+          <ol className="priority-list">
+            {priorities.map((id, index) => {
+              const info = priorityInfo(id);
+              return <li key={id}>
+                <b>{index + 1}</b>
+                <span><strong>{info.label}</strong><small>{info.effect}</small></span>
+                <span className="priority-moves">
+                  <button className="icon-button" disabled={index === 0} onClick={() => movePriority(id, -1)} aria-label={`Move ${info.label} up`} title="Move up"><ArrowUp size={15} /></button>
+                  <button className="icon-button" disabled={index === priorities.length - 1} onClick={() => movePriority(id, 1)} aria-label={`Move ${info.label} down`} title="Move down"><ArrowDown size={15} /></button>
+                </span>
+              </li>;
+            })}
+          </ol>
+          <p className="constraint-note">Higher priorities win when two of them pull different ways.</p>
           <h3 className="form-subheading">Required functions</h3>
           <div className="tag-editor needs">
-            {project.needs.map((need) => <span key={need}>{need}</span>)}
-            <button onClick={() => { const value = window.prompt("Add a need (for example: two study seats)"); if (value) mutate((current) => ({ ...current, needs: [...current.needs, value] })); }}><Plus size={14} /> Add need</button>
+            {needs.map((id) => {
+              const need = needInfo(id);
+              const missing = uncovered.includes(id);
+              return <span key={id} className={missing ? "uncovered" : ""} title={missing ? `Nothing in the plan covers ${need.label.toLowerCase()} yet` : undefined}>{missing && <AlertTriangle size={12} />}{need.label}<button onClick={() => mutate((current) => ({ ...current, needs: requiredNeeds(current).filter((candidate) => candidate !== id) }))} aria-label={`Remove ${need.label}`}>×</button></span>;
+            })}
+            {needs.length < NEEDS.length && <select className="need-add" value="" aria-label="Add a required function" onChange={(event) => {
+              const id = event.target.value as NeedId;
+              if (id) mutate((current) => ({ ...current, needs: [...requiredNeeds(current).filter((candidate) => candidate !== id), id] }));
+            }}>
+              <option value="">+ Add a required function</option>
+              {NEEDS.filter((need) => !needs.includes(need.id)).map((need) => <option value={need.id} key={need.id}>{need.label} ({need.suggestion})</option>)}
+            </select>}
           </div>
+          <p className="constraint-note">Better Cart never defers the last item covering one, and Issues flags any that nothing covers.</p>
         </section>
 
         <section className="panel-surface constraint-card span-2">

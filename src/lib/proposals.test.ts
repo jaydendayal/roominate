@@ -128,6 +128,49 @@ describe("Better Cart on user-created projects", () => {
   });
 });
 
+describe("Better Cart follows the group's priorities and required functions", () => {
+  const keepPicksFirst = ["keep_picks", "budget", "even_split"];
+
+  it("swaps a misfit for a cheaper model when budget ranks first, and moves the chosen one when keeping picks ranks first", () => {
+    const plan = project([product("bed", "bed", [1, 2, 0.5], 20000), product("bed-small", "bed", [0.9, 1.9, 0.5], 15000)], [item("i-bed", "bed", [2.8, 1.5], { essentiality: "essential" })], { budgetAmount: 16000 });
+    expect(generateProposal(plan).changes.map((change) => [change.type, change.replacementProductId])).toEqual([["replace", "bed-small"]]);
+
+    const keep = generateProposal({ ...plan, priorities: keepPicksFirst });
+    expect(keep.changes.map((change) => change.type)).toEqual(["reposition"]);
+    expect(keep.changes[0].reason).toContain("you rank keeping the products you chose above the budget");
+    expect(keep.blockers?.find((blocker) => blocker.includes("over budget"))).toContain("cheaper equivalents exist");
+  });
+
+  it("defers optional items instead of swapping chosen products when keeping picks ranks first", () => {
+    const products = [product("desk", "desk", [1.2, 0.6, 0.75], 30000), product("desk-cheap", "desk", [1.1, 0.55, 0.75], 18000), product("rug", "rug", [1.5, 1, 0.01], 12000)];
+    const plan = project(products, [item("i-desk", "desk", [1.5, 0.4], { essentiality: "essential" }), item("i-rug", "rug", [1.5, 2])], { budgetAmount: 35000, priorities: keepPicksFirst });
+    const proposal = generateProposal(plan);
+    expect(proposal.changes.map((change) => [change.type, change.itemId])).toEqual([["defer", "i-rug"]]);
+    expect(proposal.changes.some((change) => change.type === "replace")).toBe(false);
+  });
+
+  it("cuts from whoever is spending more when an even split ranks above the biggest saving", () => {
+    const products = [product("desk", "desk", [1.2, 0.6, 0.75], 30000), product("lamp", "lighting", [0.3, 0.3, 1.5], 5000), product("rug", "rug", [1.5, 1, 0.01], 12000)];
+    const items = [item("i-desk", "desk", [1.5, 0.4], { essentiality: "essential" }), item("i-lamp", "lamp", [0.3, 3]), item("i-rug", "rug", [1.5, 2], { ownerId: "person-maya" })];
+    const plan = project(products, items, { budgetAmount: 44000 });
+    // Budget first: the biggest saving is Maya's rug, even though Jay is spending far more.
+    expect(generateProposal(plan).changes.map((change) => change.itemId)).toEqual(["i-rug"]);
+    const even = generateProposal({ ...plan, priorities: ["even_split", "budget", "keep_picks"] });
+    expect(even.changes.map((change) => change.itemId)).toEqual(["i-lamp"]);
+    expect(even.changes[0].reason).toContain("Jay is spending the most");
+  });
+
+  it("never defers the last item covering a required function", () => {
+    const products = [product("desk", "desk", [1.2, 0.6, 0.75], 30000), product("lamp", "lighting", [0.3, 0.3, 1.5], 5000)];
+    const plan = project(products, [item("i-desk", "desk", [1.5, 0.4], { essentiality: "essential" }), item("i-lamp", "lamp", [0.3, 3])], { budgetAmount: 32000 });
+    expect(generateProposal(plan).changes.map((change) => [change.type, change.itemId])).toEqual([["defer", "i-lamp"]]);
+
+    const lit = generateProposal({ ...plan, needs: ["room-lighting"] });
+    expect(lit.changes).toEqual([]);
+    expect(lit.blockers?.find((blocker) => blocker.includes("over budget"))).toContain("the only ones covering lighting");
+  });
+});
+
 describe("Better Cart change independence", () => {
   it("keeps every placement valid even when the user accepts only that one change", () => {
     const demo = createDemoProject();

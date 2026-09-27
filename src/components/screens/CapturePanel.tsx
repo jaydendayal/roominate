@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BedDouble, Camera, Check, Crosshair, DoorOpen, DraftingCompass, ImagePlus, LoaderCircle, Palette, Plus, Ruler, ScanLine, Trash2, Upload, Video } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
-import { BED_SIZES, currentBedSize, DEFAULT_BED_SIZE, isRoomBedItem, setProvidedBed } from "@/lib/beds";
+import { addRoomBed, BED_SIZES, bedSizeOf, DEFAULT_BED_SIZE, removeRoomBed, roomBeds, setRoomBedSize } from "@/lib/beds";
 import { calculateIssues, productFor } from "@/lib/calculations";
 import { apiFetch, normalizeImageUpload } from "@/lib/api";
 import { DOORWAY_EVIDENCE, PLAN_DOOR_SWING_ID } from "@/lib/floorPlan";
@@ -118,9 +118,7 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
   const scaleConfirmed = project.room.dimensionEvidence.width.confirmedByUser || project.room.dimensionEvidence.length.confirmedByUser;
   const guidedAssets = project.room.mediaAssets.filter((asset) => asset.name.startsWith("guided-"));
   const analysisAssets = guidedAssets.length >= 5 ? [guidedAssets[0], guidedAssets[2], guidedAssets[4]] : project.room.mediaAssets.slice(0, 3);
-  const bedSize = currentBedSize(project);
-  const bedItem = project.items.find(isRoomBedItem);
-  const bedModel = bedItem ? productFor(project, bedItem) : null;
+  const beds = roomBeds(project);
   const mattressLabel = ([width, length]: [number, number]) => units.objectUnit === "in" ? `${width} × ${length} in` : `${Math.round(width * 2.54)} × ${Math.round(length * 2.54)} cm`;
 
   const updateRoom = (patch: Partial<Project["room"]>) => update((current) => ({
@@ -321,16 +319,30 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
           {scaleConfirmed
             ? <div className="evidence-note"><Ruler size={17} /><span><strong>Scale is anchored.</strong> The room has a valid floor and positive confirmed dimensions for placement.</span></div>
             : <div className="evidence-note unanchored"><AlertTriangle size={17} /><span><strong>Scale is an estimate.</strong> Measure the width or length and mark it confirmed before trusting what fits.</span></div>}
-          <div className="subsection-title"><h3>Bed that comes with the room</h3></div>
-          <div className="bed-setting">
-            <label><span>Bed size</span>
-              <select value={bedSize} onChange={(event) => update((current) => setProvidedBed(current, event.target.value as BedSize | "none"))}>
-                {BED_SIZES.map((info) => <option value={info.id} key={info.id}>{info.label} · {mattressLabel(info.mattress)} mattress{info.id === DEFAULT_BED_SIZE ? " (typical dorm)" : ""}</option>)}
-                <option value="none">No bed provided</option>
-              </select>
-            </label>
-            {bedItem && bedModel && <ColorChoicePicker product={bedModel} selection={bedItem.colorSelection} onChange={(colorSelection) => update((current) => ({ ...current, items: current.items.map((item) => item.id === bedItem.id ? { ...item, colorSelection } : item) }))} />}
-            <small><BedDouble size={14} /> {bedItem ? "Placed in the 3D Studio as an owned item you can move or lock. It counts for fit and clearance, never for the cart." : "No bed is modeled. Pick a size to add the room's bed."}</small>
+          <div className="subsection-title"><h3>Beds that come with the room</h3><button className="text-button" onClick={() => update((current) => addRoomBed(current))}><Plus size={15} /> Add bed</button></div>
+          <div className="bed-list">
+            {beds.map((bed, index) => {
+              const model = productFor(project, bed);
+              const updateBed = (patch: Partial<typeof bed>) => update((current) => ({ ...current, items: current.items.map((item) => item.id === bed.id ? { ...item, ...patch } : item) }));
+              return <div className="bed-setting" key={bed.id}>
+                <div className="bed-fields">
+                  <label><span>{beds.length > 1 ? `Bed ${index + 1} size` : "Bed size"}</span>
+                    <select value={bedSizeOf(bed.productId)!} onChange={(event) => update((current) => setRoomBedSize(current, bed.id, event.target.value as BedSize))}>
+                      {BED_SIZES.map((info) => <option value={info.id} key={info.id}>{info.label} · {mattressLabel(info.mattress)} mattress{info.id === DEFAULT_BED_SIZE ? " (typical dorm)" : ""}</option>)}
+                    </select>
+                  </label>
+                  {project.people.length > 1 && <label><span>Whose bed</span>
+                    <select value={bed.ownerId} onChange={(event) => updateBed({ ownerId: event.target.value })}>
+                      {project.people.map((person) => <option value={person.id} key={person.id}>{person.name}</option>)}
+                    </select>
+                  </label>}
+                  <button className="icon-button danger" onClick={() => update((current) => removeRoomBed(current, bed.id))} aria-label={beds.length > 1 ? `Remove bed ${index + 1}` : "Remove bed"} title="Remove bed"><Trash2 size={15} /></button>
+                </div>
+                {model && <ColorChoicePicker product={model} selection={bed.colorSelection} onChange={(colorSelection) => updateBed({ colorSelection })} />}
+              </div>;
+            })}
+            {!beds.length && <p className="empty-row">No bed is modeled. Add one for each bed the room comes with.</p>}
+            <small className="bed-note"><BedDouble size={14} /> {beds.length ? "Placed in the 3D Studio as owned items you can move or lock. Beds count for fit and clearance, never for the cart." : "Rooms without a provided bed leave the floor free for your own."}</small>
           </div>
           <div className="subsection-title"><h3>Openings & fixed features</h3><button className="text-button" onClick={() => updateRoom({ features: [...project.room.features, { id: `door-${crypto.randomUUID()}`, name: "New door", kind: "door", position: { x: 0.5, y: 0 }, width: 0.9, depth: 0.08, height: 2.03, confirmed: false }] })}><Plus size={15} /> Add</button></div>
           <div className="feature-list">

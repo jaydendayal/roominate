@@ -1,3 +1,4 @@
+import { needInfo, uncoveredRequiredNeeds } from "./needs";
 import { convexInsidePolygon, hasShapedOutline, nearestWallFacing, roomPolygon } from "./roomShape";
 import type { Dimensions, DuplicateResolution, Issue, Item, Product, Project, RoomFeature, Vec2 } from "./types";
 
@@ -403,6 +404,21 @@ export function calculateIssues(project: Project, options: IssueOptions = {}): I
       message: `${cents(subtotal.amount - project.budgetAmount)} over budget`,
       detail: `${cents(subtotal.amount)} selected against a ${cents(project.budgetAmount)} limit; shipping and tax are not included.`,
       suggestedActions: ["Review optional items", "Compare alternatives"],
+      status: "open",
+    });
+  }
+
+  for (const need of uncoveredRequiredNeeds(project).map(needInfo)) {
+    issues.push({
+      id: `need-${need.id}`,
+      type: "unmet_need",
+      severity: "warning",
+      confidence: "confirmed",
+      affectedItemIds: [],
+      affectedGeometryIds: [],
+      message: `Nothing in the plan covers ${need.label.toLowerCase()}`,
+      detail: `${need.label} is a required function in Constraints, but no item in the plan provides it. Add ${need.suggestion}, or bring back a deferred one.`,
+      suggestedActions: [`Add ${need.suggestion}`, "Remove the requirement in Constraints"],
       status: "open",
     });
   }
