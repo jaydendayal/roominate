@@ -1,10 +1,14 @@
 import { calculateIssues, cents, physicalIssues, productFor, purchaseSubtotal } from "./calculations";
+import { needInfo, type NeedId, uncoveredRequiredNeeds } from "./needs";
+import { priorityInfo, priorityOrder, ranksAbove } from "./priorities";
 import type { Issue, Item, Product, Project, Proposal, ProposalChange, Vec2 } from "./types";
 
 // Better Cart: deterministic candidate generation for any project (no fixture IDs).
 // Hard constraints (confirmed rules, room geometry, locked items) are resolved first,
 // then duplicates, fit, clearance, and finally budget. Every geometric change is
-// validated with the same physical checks the app uses.
+// validated with the same physical checks the app uses. The group's ranked priorities
+// decide the tradeoffs (swap or move, swap or defer, whose purchase goes first), and
+// Better Cart never defers the last item covering a required function.
 
 interface Placement {
   position: Vec2;
@@ -49,6 +53,17 @@ function violatesConfirmedRule(project: Project, product: Product) {
 function uncoveredNeeds(after: Project, item: Item) {
   return item.needsServed.filter((need) => !active(after).some((other) => other.id !== item.id && other.needsServed.includes(need)));
 }
+
+/** Required needs that `after` leaves uncovered but `before` covered. */
+function requiredNeedsLost(before: Project, after: Project): NeedId[] {
+  const already = new Set(uncoveredRequiredNeeds(before));
+  return uncoveredRequiredNeeds(after).filter((need) => !already.has(need));
+}
+
+/** What an owner has in the cart right now. */
+const spendOf = (project: Project, ownerId: string) => active(project)
+  .filter((item) => item.ownerId === ownerId && item.purchaseStatus === "in_cart")
+  .reduce((sum, item) => sum + lineCost(productFor(project, item), item), 0);
 
 function needImpact(after: Project, item: Item) {
   const lost = uncoveredNeeds(after, item);
@@ -175,6 +190,25 @@ export function generateProposal(project: Project): Proposal {
     touched.add(change.itemId);
     proposed = applyChange(proposed, change);
   };
+  const deferred = (item: Item) => applyChange(proposed, { id: "", type: "defer", itemId: item.id, reason: "", impact: "", confidence: "confirmed", accepted: null });
+  const keepsRequiredNeeds = (item: Item) => !requiredNeedsLost(proposed, deferred(item)).length;
+
+  // Priorities: may budget swap out chosen products, and does an even split outrank the biggest saving?
+  const order = priorityOrder(project);
+  const budgetSwaps = ranksAbove(order, "budget", "keep_picks");
+  const evenFirst = ranksAbove(order, "even_split", "budget");
+  /** Which purchase to cut first: biggest saving, or the bigger spender's, whichever ranks higher. */
+  const cutFirst = (a: { item: Item; savings: number }, b: { item: Item; savings: number }) => {
+    const bySavings = b.savings - a.savings;
+    const bySpend = spendOf(proposed, b.item.ownerId) - spendOf(proposed, a.item.ownerId);
+    return evenFirst ? bySpend || bySavings : bySavings || bySpend;
+  };
+  /** " Jay is spending the most ($120)." when an even split picked this owner's item. */
+  const evenSplitNote = (item: Item) => {
+    const spend = spendOf(proposed, item.ownerId);
+    const others = proposed.people.filter((person) => person.id !== item.ownerId).map((person) => spendOf(proposed, person.id));
+    return evenFirst && others.length && others.every((other) => spend > other) ? ` ${ownerName(proposed, item)} is spending the most (${cents(spend)}), and you rank keeping spending even above the biggest saving.` : "";
+  };
 
   // 1. Confirmed housing rules are hard constraints: swap to a permitted equivalent, otherwise remove.
   for (const issue of calculateIssues(proposed).filter((candidate) => candidate.type === "rule")) {
@@ -214,8 +248,9 @@ export function generateProposal(project: Project): Proposal {
     const pair = issue.affectedItemIds.map((id) => proposed.items.find((item) => item.id === id)).filter((item): item is Item => Boolean(item));
     if (pair.length !== 2 || pair.some((item) => touched.has(item.id))) continue;
     const drop = pair
-      .filter((item) => editable(item) && item.purchaseStatus === "in_cart" && item.essentiality === "optional")
-      .sort((a, b) => lineCost(productFor(proposed, b), b) - lineCost(productFor(proposed, a), a))[0];
+      .filter((item) => editable(item) && item.purchaseStatus === "in_cart" && item.essentiality === "optional" && keepsRequiredNeeds(item))
+      .map((item) => ({ item, savings: lineCost(productFor(proposed, item), item) }))
+      .sort(cutFirst)[0]?.item;
     if (!drop) {
       blockers.push(`${ownerName(proposed, pair[0])} and ${ownerName(proposed, pair[1])} both plan ${name(pair[0])} / ${name(pair[1])}. Both are essential or locked, so decide together in Issues whether both are needed.`);
       continue;
@@ -226,7 +261,7 @@ export function generateProposal(project: Project): Proposal {
       id: `change-defer-${drop.id}`,
       type: "defer",
       itemId: drop.id,
-      reason: `Defer ${ownerName(proposed, drop)}’s ${name(drop)}: ${ownerName(proposed, keep)}’s ${name(keep)} already covers ${shared}. If both are intentional, reject this change.`,
+      reason: `Defer ${ownerName(proposed, drop)}’s ${name(drop)}: ${ownerName(proposed, keep)}’s ${name(keep)} already covers ${shared}.${evenSplitNote(drop)} If both are intentional, reject this change.`,
       impact: `Saves ${cents(lineCost(productFor(proposed, drop), drop))}; ${ownerName(proposed, keep)} keeps their purchase and no buyer is reassigned.`,
       confidence: issue.confidence,
       accepted: null,
@@ -256,9 +291,11 @@ export function generateProposal(project: Project): Proposal {
     const reposition = issue.id.startsWith("ceiling-") ? null : findSafePlacement(project, proposed, item.id);
     const swaps = substitutes(project, proposed, item).filter((option) => option.placement);
     const gap = overBudget(proposed);
-    // Over budget: take the cheapest option that fits. Otherwise keep the chosen product if it can move.
+    // Over budget, and budget ranks above keeping picks: take the cheapest option that fits.
+    // Otherwise keep the chosen product if it can move.
     const bestSwap = swaps[0];
-    const preferSwap = bestSwap && (!reposition || (gap > 0 && bestSwap.savings > 0));
+    const cheaperFits = Boolean(bestSwap && gap > 0 && bestSwap.savings > 0);
+    const preferSwap = bestSwap && (!reposition || (budgetSwaps && cheaperFits));
     if (preferSwap) {
       const why = gap > 0 && reposition ? ` It also cuts ${cents(bestSwap.savings)} while the cart is ${cents(gap)} over budget.` : "";
       push(replaceChange(proposed, item, bestSwap, `Swap ${name(item)} for ${bestSwap.product.name}: ${fitProblem(proposed, issue, item.id)}, and the replacement fits at a collision-tested spot.${why}`));
@@ -269,7 +306,7 @@ export function generateProposal(project: Project): Proposal {
         itemId: item.id,
         position: reposition.position,
         rotationZ: reposition.rotationZ,
-        reason: `Move ${name(item)} to the nearest collision-free spot${reposition.rotationZ !== (item.transform?.rotationZ ?? 0) ? ", rotated 90°" : ""}: ${fitProblem(proposed, issue, item.id)} where it is now.`,
+        reason: `Move ${name(item)} to the nearest collision-free spot${reposition.rotationZ !== (item.transform?.rotationZ ?? 0) ? ", rotated 90°" : ""}: ${fitProblem(proposed, issue, item.id)} where it is now.${cheaperFits ? ` The cheaper ${bestSwap.product.name} would also fit, but you rank keeping the products you chose above the budget.` : ""}`,
         impact: "No cost change; placement collision-tested.",
         confidence: "confirmed",
         accepted: null,
@@ -307,30 +344,42 @@ export function generateProposal(project: Project): Proposal {
     });
   }
 
-  // 5. Budget: cheaper equivalents first (needs preserved), then defer optional purchases, biggest savings first.
+  // 5. Budget: cheaper equivalents first (needs preserved) unless keeping picks ranks higher, then
+  // defer optional purchases that no required function depends on, in priority order.
   while (overBudget(proposed) > 0) {
     const gap = overBudget(proposed);
     const open = active(proposed).filter((item) => editable(item) && item.purchaseStatus === "in_cart");
-    const cheaper = open
-      .flatMap((item) => substitutes(project, proposed, item).filter((option) => option.savings > 0 && (option.placement || !item.transform)).map((option) => ({ item, option })))
-      .sort((a, b) => b.option.savings - a.option.savings)[0];
+    const cheaper = budgetSwaps ? open
+      .flatMap((item) => substitutes(project, proposed, item).filter((option) => option.savings > 0 && (option.placement || !item.transform)).map((option) => ({ item, option, savings: option.savings })))
+      .sort(cutFirst)[0] : undefined;
     if (cheaper) {
-      push(replaceChange(proposed, cheaper.item, cheaper.option, `Swap ${name(cheaper.item)} for ${cheaper.option.product.name} to close the ${cents(gap)} budget gap.`));
+      push(replaceChange(proposed, cheaper.item, cheaper.option, `Swap ${name(cheaper.item)} for ${cheaper.option.product.name} to close the ${cents(gap)} budget gap.${evenSplitNote(cheaper.item)}`));
       continue;
     }
-    const optional = open
-      .filter((item) => item.essentiality === "optional" && lineCost(productFor(proposed, item), item) > 0)
-      .sort((a, b) => lineCost(productFor(proposed, b), b) - lineCost(productFor(proposed, a), a))[0];
+    const deferrable = open.filter((item) => item.essentiality === "optional" && lineCost(productFor(proposed, item), item) > 0);
+    const optional = deferrable
+      .filter(keepsRequiredNeeds)
+      .map((item) => ({ item, savings: lineCost(productFor(proposed, item), item) }))
+      .sort(cutFirst)[0]?.item;
     if (!optional) {
-      blockers.push(`Still ${cents(gap)} over budget: the remaining items are essential, locked, or have no cheaper equivalent. Raise the budget, mark an item optional, or import a cheaper option.`);
+      const protectedNeeds = [...new Set(deferrable.flatMap((item) => requiredNeedsLost(proposed, deferred(item))))].map((need) => needInfo(need).label.toLowerCase());
+      // Includes items already moved in this proposal: keeping picks, not the move, ruled out their swap.
+      const swapsSkipped = !budgetSwaps && active(proposed).some((item) => !item.locked && item.purchaseStatus === "in_cart" && substitutes(project, proposed, item).some((option) => option.savings > 0));
+      const why = [
+        swapsSkipped ? `cheaper equivalents exist, but you rank “${priorityInfo("keep_picks").label}” above “${priorityInfo("budget").label}”` : "",
+        protectedNeeds.length ? `the remaining optional items are the only ones covering ${protectedNeeds.join(" and ")}, a required function` : "",
+      ].filter(Boolean);
+      blockers.push(why.length
+        ? `Still ${cents(gap)} over budget: ${why.join("; ")}. Reorder priorities or change required functions in Constraints, or raise the budget.`
+        : `Still ${cents(gap)} over budget: the remaining items are essential, locked, or have no cheaper equivalent. Raise the budget, mark an item optional, or import a cheaper option.`);
       break;
     }
-    const after = applyChange(proposed, { id: "", type: "defer", itemId: optional.id, reason: "", impact: "", confidence: "confirmed", accepted: null });
+    const after = deferred(optional);
     push({
       id: `change-defer-${optional.id}`,
       type: "defer",
       itemId: optional.id,
-      reason: `Defer the optional ${name(optional)} to close the ${cents(gap)} budget gap.`,
+      reason: `Defer the optional ${name(optional)} to close the ${cents(gap)} budget gap.${evenSplitNote(optional)}`,
       impact: `Saves ${cents(lineCost(productFor(proposed, optional), optional))}; ${needImpact(after, optional)}.`,
       confidence: "confirmed",
       accepted: null,

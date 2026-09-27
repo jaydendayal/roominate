@@ -113,7 +113,10 @@ export interface Room {
    * so editing either dimension stretches the shape. Omitted means a plain width × length rectangle.
    */
   outline?: Vec2[];
-  /** Size of the bed that comes with the room ("none" if it has none). Omitted in rooms saved before this setting; they default to Twin XL. */
+  /**
+   * Size of the first bed that comes with the room ("none" if it has none); the beds themselves are
+   * owned items. Omitted in rooms saved before this setting; they default to one Twin XL.
+   */
   providedBed?: BedSize | "none";
   dimensionEvidence: Record<"width" | "length" | "height", Evidence>;
   mediaAssets: MediaAsset[];
@@ -258,7 +261,9 @@ export interface Project {
   items: Item[];
   budgetAmount: number;
   budgetCurrency: "USD";
+  /** Priority ids (see priorities.ts), most important first. Older rooms may hold free-text labels. */
   priorities: string[];
+  /** Required functions (need ids from needs.ts) that Better Cart keeps covered. */
   needs: string[];
   rules: HousingRule[];
   duplicateResolutions: Record<string, DuplicateResolution>;

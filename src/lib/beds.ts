@@ -1,8 +1,10 @@
+import { calculateIssues } from "./calculations";
 import { initialProductPlacement } from "./discovery";
 import type { BedSize, Item, Product, Project } from "./types";
 
-// The bed that comes with the room (dorms and furnished rentals usually provide one). It is an
-// owned item that is never purchased, so it counts for fit and clearance but never for the cart.
+// The beds that come with the room (dorms and furnished rentals usually provide one per resident).
+// Each is an owned item that is never purchased, so it counts for fit and clearance but never for
+// the cart.
 
 const INCH = 0.0254;
 
@@ -73,51 +75,82 @@ export function bedProduct(size: BedSize): Product {
 
 export const isRoomBedItem = (item: Item) => bedSizeOf(item.productId) !== null;
 
-/** The size shown for the room: the bed actually in the room, or "none" if it was removed. */
-export function currentBedSize(project: Project): BedSize | "none" {
-  const bed = project.items.find(isRoomBedItem);
-  return bed ? bedSizeOf(bed.productId)! : "none";
-}
+/** The beds that come with the room, in list order. Shared rooms usually have one per roommate. */
+export const roomBeds = (project: Project) => project.items.filter(isRoomBedItem);
 
 /**
- * Sets the bed that comes with the room. Changing the size keeps the bed's spot, rotation, lock,
- * and colors; adding one places it at the first collision-free spot; "none" removes it.
+ * Keeps the bed products and the room's bed setting in step with the bed items. Bed products still
+ * in use are kept as they are; sizes no bed uses any more are dropped.
  */
-export function setProvidedBed(project: Project, size: BedSize | "none"): Project {
-  const existing = project.items.find(isRoomBedItem);
-  const others = project.items.filter((item) => !isRoomBedItem(item));
-  const products = project.products.filter((product) => bedSizeOf(product.id) === null);
-  const base: Project = {
+function syncBeds(project: Project, items: Item[]): Project {
+  const sizes = new Set(items.filter(isRoomBedItem).map((item) => bedSizeOf(item.productId)!));
+  const kept = project.products.filter((product) => bedSizeOf(product.id) === null || sizes.has(bedSizeOf(product.id)!));
+  const missing = [...sizes].filter((size) => !kept.some((product) => product.id === bedProductId(size))).map(bedProduct);
+  const first = items.find(isRoomBedItem);
+  return {
     ...project,
-    room: { ...project.room, providedBed: size },
-    products,
-    items: others,
+    room: { ...project.room, providedBed: first ? bedSizeOf(first.productId)! : "none" },
+    products: [...kept, ...missing],
+    items,
     cartVersion: project.cartVersion + 1,
     proposal: project.proposal ? { ...project.proposal, stale: true } : null,
   };
-  if (size === "none") return base;
-  const product = bedProduct(size);
-  const withProduct = { ...base, products: [...products, product] };
-  const item: Item = existing
-    ? { ...existing, productId: product.id }
-    : {
-      id: ROOM_BED_ITEM_ID,
-      productId: product.id,
-      ownerId: project.ownerId,
-      acquisitionStatus: "owned",
-      purchaseStatus: "not_purchasing",
-      quantity: 1,
-      essentiality: "essential",
-      needsServed: ["sleeping"],
-      transform: initialProductPlacement(withProduct, product),
-      placementType: "floor",
-    };
-  return { ...withProduct, items: [...others, item] };
+}
+
+/**
+ * Spots mirroring each existing bed across the room (side to side, then end to end), turned so the
+ * headboard meets the mirrored wall. Roommates usually get this layout, with a walkway between beds.
+ */
+function mirroredBedSpots(project: Project, beds: Item[]): NonNullable<Item["transform"]>[] {
+  const { width, length } = project.room;
+  return [...beds].reverse().flatMap(({ transform }) => transform ? [
+    { position: { x: width - transform.position.x, y: transform.position.y }, rotationZ: -transform.rotationZ },
+    { position: { x: transform.position.x, y: length - transform.position.y }, rotationZ: Math.PI - transform.rotationZ },
+  ] : []);
+}
+
+/**
+ * Adds a bed that comes with the room, mirroring an existing bed when that spot is free and
+ * otherwise at the first collision-free spot. It goes to the first roommate without a bed yet and
+ * matches the last bed's size, since shared rooms usually get a matching bed each.
+ */
+export function addRoomBed(project: Project, size?: BedSize): Project {
+  const beds = roomBeds(project);
+  const bedSize = size ?? (beds.length ? bedSizeOf(beds[beds.length - 1].productId)! : DEFAULT_BED_SIZE);
+  const product = bedProduct(bedSize);
+  const withProduct = { ...project, products: [...project.products.filter((candidate) => candidate.id !== product.id), product] };
+  const owners = new Set(beds.map((bed) => bed.ownerId));
+  const item: Item = {
+    id: project.items.some((candidate) => candidate.id === ROOM_BED_ITEM_ID) ? `${ROOM_BED_ITEM_ID}-${crypto.randomUUID()}` : ROOM_BED_ITEM_ID,
+    productId: product.id,
+    ownerId: project.people.find((person) => !owners.has(person.id))?.id ?? project.ownerId,
+    acquisitionStatus: "owned",
+    purchaseStatus: "not_purchasing",
+    quantity: 1,
+    essentiality: "essential",
+    needsServed: ["sleeping"],
+    transform: null,
+    placementType: "floor",
+  };
+  const isFree = (transform: NonNullable<Item["transform"]>) => !calculateIssues({ ...withProduct, items: [...project.items, { ...item, transform }] })
+    .some((issue) => (issue.type === "fit" || issue.type === "clearance") && issue.affectedItemIds.includes(item.id));
+  const transform = mirroredBedSpots(project, beds).find(isFree) ?? initialProductPlacement(withProduct, product);
+  return syncBeds(project, [...project.items, { ...item, transform }]);
+}
+
+/** Changes one bed's size in place, keeping its spot, rotation, lock, owner, and colors. */
+export function setRoomBedSize(project: Project, itemId: string, size: BedSize): Project {
+  return syncBeds(project, project.items.map((item) => item.id === itemId && isRoomBedItem(item) ? { ...item, productId: bedProductId(size) } : item));
+}
+
+/** Removes one bed; removing the last one leaves the room with no bed. */
+export function removeRoomBed(project: Project, itemId: string): Project {
+  return syncBeds(project, project.items.filter((item) => item.id !== itemId || !isRoomBedItem(item)));
 }
 
 /** Rooms saved before the bed setting existed get the default Twin XL bed once. */
 export function ensureProvidedBed(project: Project): Project {
   if (project.room.providedBed !== undefined) return project;
   const { cartVersion, proposal } = project;
-  return { ...setProvidedBed(project, DEFAULT_BED_SIZE), cartVersion, proposal };
+  return { ...addRoomBed(project, DEFAULT_BED_SIZE), cartVersion, proposal };
 }
