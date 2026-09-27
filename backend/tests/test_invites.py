@@ -13,7 +13,7 @@ def _project() -> dict:
         "name": "API shared room",
         "ownerId": "person-owner",
         "people": [{"id": "person-owner", "name": "Owner", "color": "#527D68"}],
-        "room": {"mediaAssets": [{"id": "photo", "dataUrl": "data:image/jpeg;base64,private"}]},
+        "room": {},
         "products": [{"id": "product", "screenshotDataUrl": "data:image/png;base64,private"}],
         "items": [],
     }
@@ -37,7 +37,6 @@ def test_remote_invite_api_strips_media_and_accepts_member(tmp_path: Path, monke
     accepted = client.post(f"/api/v1/invites/{token}/accept", json={"display_name": "Remote roommate"})
     assert accepted.status_code == 200
     shared = accepted.json()["project"]
-    assert shared["room"]["mediaAssets"] == []
     assert "screenshotDataUrl" not in shared["products"][0]
     assert shared["people"][-1]["name"] == "Remote roommate"
 

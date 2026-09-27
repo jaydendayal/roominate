@@ -1,7 +1,8 @@
-import { productFor, rotatedFootprint } from "./calculations";
+import { itemBounds, productFor, rotatedFootprint } from "./calculations";
 import type { Project, Vec2 } from "./types";
 
 const WALL_PREFERENCE_M = 0.02;
+export const FURNITURE_SNAP_DISTANCE_M = 0.12;
 export const ROTATION_SNAP_RADIANS = Math.PI / 12;
 
 /** Keeps persisted rotations compact while preserving the same orientation. */
@@ -54,4 +55,82 @@ export function snapItemPosition(project: Project, itemId: string, position: Vec
   const product = item ? productFor(project, item) : undefined;
   const footprint = product ? rotatedFootprint(product.dimensions, rotationZ ?? item?.transform?.rotationZ ?? 0) : null;
   return footprint ? snapPosition(position, footprint, cell, project.room) : position;
+}
+
+interface NeighborSnap {
+  position: Vec2;
+  snappedX: boolean;
+  snappedY: boolean;
+}
+
+/** Finds nearby furniture edges and magnetically places the moving item flush beside them. */
+export function snapItemToNeighbors(project: Project, itemId: string, position: Vec2, rotationZ?: number, threshold = FURNITURE_SNAP_DISTANCE_M): NeighborSnap {
+  const item = project.items.find((candidate) => candidate.id === itemId);
+  const product = item ? productFor(project, item) : undefined;
+  const footprint = product ? rotatedFootprint(product.dimensions, rotationZ ?? item?.transform?.rotationZ ?? 0) : null;
+  if (!item || !footprint || !(threshold > 0)) return { position, snappedX: false, snappedY: false };
+
+  const moving = {
+    minX: position.x - footprint.width / 2,
+    maxX: position.x + footprint.width / 2,
+    minY: position.y - footprint.depth / 2,
+    maxY: position.y + footprint.depth / 2,
+  };
+  let x = position.x;
+  let y = position.y;
+  let xDistance = threshold + 1;
+  let yDistance = threshold + 1;
+
+  for (const other of project.items) {
+    if (other.id === itemId || other.purchaseStatus === "deferred") continue;
+    const bounds = itemBounds(project, other);
+    if (!bounds) continue;
+    const overlapsY = moving.minY < bounds.maxY && moving.maxY > bounds.minY;
+    const overlapsX = moving.minX < bounds.maxX && moving.maxX > bounds.minX;
+    if (overlapsY) {
+      const candidates = [bounds.minX - footprint.width / 2, bounds.maxX + footprint.width / 2];
+      for (const candidate of candidates) {
+        const distance = Math.abs(candidate - position.x);
+        if (distance <= threshold && distance < xDistance) {
+          x = candidate;
+          xDistance = distance;
+        }
+      }
+    }
+    if (overlapsX) {
+      const candidates = [bounds.minY - footprint.depth / 2, bounds.maxY + footprint.depth / 2];
+      for (const candidate of candidates) {
+        const distance = Math.abs(candidate - position.y);
+        if (distance <= threshold && distance < yDistance) {
+          y = candidate;
+          yDistance = distance;
+        }
+      }
+    }
+  }
+
+  return {
+    position: { x: Number(x.toFixed(4)), y: Number(y.toFixed(4)) },
+    snappedX: xDistance <= threshold,
+    snappedY: yDistance <= threshold,
+  };
+}
+
+interface ItemPlacementSnapOptions {
+  grid?: boolean;
+  furniture?: boolean;
+  cell?: number;
+  rotationZ?: number;
+  threshold?: number;
+}
+
+/** Combines grid and furniture snapping; nearby furniture edges win on the axis they snap. */
+export function snapItemPlacement(project: Project, itemId: string, position: Vec2, options: ItemPlacementSnapOptions = {}): Vec2 {
+  const onGrid = options.grid ? snapItemPosition(project, itemId, position, options.cell ?? 0, options.rotationZ) : position;
+  if (!options.furniture) return onGrid;
+  const neighbor = snapItemToNeighbors(project, itemId, position, options.rotationZ, options.threshold);
+  return {
+    x: neighbor.snappedX ? neighbor.position.x : onGrid.x,
+    y: neighbor.snappedY ? neighbor.position.y : onGrid.y,
+  };
 }

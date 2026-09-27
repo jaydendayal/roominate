@@ -169,6 +169,7 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
   const [trace, setTrace] = useState<FloorTrace | null>(null);
   const [tracing, setTracing] = useState(false);
   const [measurements, setMeasurements] = useState<(Pinned & { meters: number })[]>([]);
+  const [manualWallLabel, setManualWallLabel] = useState("");
   const [overall, setOverall] = useState<{ x?: number; y?: number }>({});
   const [reading, setReading] = useState<{ state: "idle" | "loading" | "done" | "error"; message: string; result: FloorPlanReading | null; labels: Record<string, Pinned> }>({ state: "idle", message: "", result: null, labels: {} });
   const [includeOpenings, setIncludeOpenings] = useState(true);
@@ -299,6 +300,7 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
       setMarkingDoor(false);
       setTrace(null);
       setMeasurements([]);
+      setManualWallLabel("");
       setOverall({});
       setReading({ state: "idle", message: "", result: null, labels: {} });
     } catch (error) {
@@ -377,12 +379,14 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
   const area = shape ? roomArea(shape) : 0;
   const areaText = units.unitSystem === "imperial" ? `${Math.round(area * 10.7639)} sq ft` : `${area.toFixed(1)} m²`;
   const measuredCount = Object.keys(wallMeasurements).length + (overall.x ? 1 : 0) + (overall.y ? 1 : 0);
+  const manualWall = walls.find((wall) => wall.label === manualWallLabel)
+    ?? walls.reduce<WallView | null>((longest, wall) => !longest || wall.lengthPx > longest.lengthPx ? wall : longest, null);
 
   return (
     <div className="scan-modal" role="dialog" aria-modal="true" aria-labelledby="plan-scan-title">
       <div className="scan-shell plan-shell">
         <header>
-          <div><p className="eyebrow">Floor plan scan</p><h2 id="plan-scan-title">{plan ? "Check the traced walls" : "Trace your room from a plan"}</h2></div>
+          <div><p className="eyebrow">AI floor plan reader</p><h2 id="plan-scan-title">{plan ? "Check the traced walls" : "Read your room from a screenshot"}</h2></div>
           <button className="icon-button" onClick={onClose} aria-label="Close floor plan scan"><X size={18} /></button>
         </header>
 
@@ -391,14 +395,15 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
             <label className="upload-dropzone">
               <input type="file" accept="image/*,.heic,.heif" aria-label="Choose a floor plan image" disabled={loading} onChange={(event) => void choose(event.target.files)} />
               <span className="upload-icon">{loading ? <LoaderCircle className="spin" size={22} /> : <ImagePlus size={22} />}</span>
-              <strong>{loading ? "Opening the plan…" : "Choose a floor plan image"}</strong>
+              <strong>{loading ? "Opening the plan…" : "Choose a floor plan or diagram"}</strong>
               <small>A screenshot or photo of your housing plan: PNG, JPEG, WebP, or HEIC. For a PDF, screenshot your room.</small>
             </label>
             <ol className="plan-steps">
               <li><b>01</b><span><strong>Tap your room</strong><small>The outline follows its walls, skipping labels and door swings.</small></span></li>
               <li><b>02</b><span><strong>Check the shape</strong><small>Adjust detail and colour match until the walls line up.</small></span></li>
-              <li><b>03</b><span><strong>Enter one wall you know</strong><small>Every other wall scales from it. Without one, the size is an estimate.</small></span></li>
-              <li><b>04</b><span><strong>Mark your doorway</strong><small>Click the wall your door is on. It becomes a confirmed door with a keep-clear area for its swing.</small></span></li>
+              <li><b>03</b><span><strong>Ask AI to read the labels</strong><small>OpenAI reads printed dimensions; you choose which measurements to use.</small></span></li>
+              <li><b>04</b><span><strong>Confirm the scale</strong><small>If no label is readable, enter one wall you know. Unlabeled lengths are never invented.</small></span></li>
+              <li><b>05</b><span><strong>Mark your doorway</strong><small>Click the wall your door is on. It becomes a confirmed door with a keep-clear area for its swing.</small></span></li>
             </ol>
             {loadError && <div className="warning-note"><AlertTriangle size={16} /> {loadError}</div>}
           </div>
@@ -463,16 +468,11 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
                 ? <p className="plan-overall">Overall size set: {overall.x ? units.formatLength(overall.x) : "—"} across × {overall.y ? units.formatLength(overall.y) : "—"} down. <button className="text-button" onClick={() => setOverall({})}>Clear</button></p>
                 : <p className="plan-overall">Already measured this room? <button className="text-button" onClick={() => setOverall(assignOverallDimensions(room.width, room.length, trace.outline))}>Use its current size ({units.formatLength(room.width)} × {units.formatLength(room.length)})</button></p>)}
               {scale && scale.disagreement > DISAGREEMENT_WARNING && <div className="warning-note"><AlertTriangle size={16} /> Your measurements disagree by {Math.round(scale.disagreement * 100)}% along one direction. Check them, or clear one.</div>}
-              <div className="plan-walls" role="table" aria-label="Walls">
-                <div role="row" className="plan-walls-head"><span role="columnheader">Wall</span><span role="columnheader">Traced</span><span role="columnheader">Measured ({units.roomUnit})</span></div>
-                {scale && walls.map((wall) => (
-                  <div role="row" className="plan-wall-row" key={wall.label}>
-                    <b role="cell">{wall.label}</b>
-                    <span role="cell">{units.formatLength(wallMeters(wall, scale))}</span>
-                    <span role="cell" className="unit-input"><LengthInput aria-label={`Measured length of wall ${wall.label} (${units.roomUnit})`} placeholder="—" min={0} step={units.roomUnit === "ft" ? 0.25 : 0.01} unit={units.roomUnit} meters={wallMeasurements[wall.index] ?? null} onChange={(meters) => measure(wall, meters)} /></span>
-                  </div>
-                ))}
-              </div>
+              {scale && manualWall && <div className="plan-measure">
+                <div><strong>Set scale with one known wall</strong><small>Choose a letter from the traced plan, then enter its real length.</small></div>
+                <label><span>Wall</span><select aria-label="Choose wall to measure" value={manualWall.label} onChange={(event) => setManualWallLabel(event.target.value)}>{walls.map((wall) => <option value={wall.label} key={wall.label}>{wall.label} · traced {units.formatLength(wallMeters(wall, scale))}</option>)}</select></label>
+                <label><span>Known length ({units.roomUnit})</span><span className="unit-input"><LengthInput aria-label={`Measured length of wall ${manualWall.label} (${units.roomUnit})`} placeholder="—" min={0} step={units.roomUnit === "ft" ? 0.25 : 0.01} unit={units.roomUnit} meters={wallMeasurements[manualWall.index] ?? null} onChange={(meters) => measure(manualWall, meters)} /></span></label>
+              </div>}
 
               <div className="plan-doorway">
                 <div className="plan-doorway-head"><DoorOpen size={16} /><strong>Doorway</strong>{doorView && <span className="source-chip confirmed"><Check size={12} /> marked</span>}</div>
@@ -490,9 +490,9 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
 
               <div className="plan-read">
                 <button className="secondary-button full" disabled={!trace || tracing || reading.state === "loading"} onClick={() => void read()}>
-                  {reading.state === "loading" ? <LoaderCircle className="spin" size={16} /> : <ScanLine size={16} />} Read printed dimensions
+                  {reading.state === "loading" ? <LoaderCircle className="spin" size={16} /> : <ScanLine size={16} />} Read printed dimensions with AI
                 </button>
-                <small>Sends the plan to the analysis service to read dimension labels, doors, and windows. Nothing is used until you choose it.</small>
+                <small>Sends clean and outlined copies to the server-side OpenAI vision call to read dimension labels, doors, and windows. Nothing is used until you choose it.</small>
                 {reading.message && <div className={`analysis-message ${reading.state === "error" ? "error" : "done"}`}><span>{reading.state === "error" ? <AlertTriangle size={16} /> : <Check size={16} />}</span>{reading.message}</div>}
                 {reading.result && reading.state === "done" && <>
                   {printed.length ? <ul className="plan-printed" aria-label="Printed dimensions">
@@ -507,7 +507,7 @@ export function FloorPlanScan({ room, projectId, onClose, onApply }: { room: Roo
                           <span><strong>{name}</strong><small>“{dimension.text}” · {dimension.evidence}</small></span>
                           <b>{units.formatLength(meters)}</b>
                           {used ? <span className="source-chip confirmed"><Check size={12} /> used</span>
-                            : wall ? <button className="text-button" onClick={() => measure(wall, meters)}>Use</button>
+                            : wall ? <button className="text-button" onClick={() => { setManualWallLabel(wall.label); measure(wall, meters); }}>Use</button>
                             : axis ? <button className="text-button" onClick={() => setOverall((current) => ({ ...current, [axis]: meters }))}>Use</button>
                             : <span className="source-chip">no wall</span>}
                         </li>

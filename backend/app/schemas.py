@@ -9,92 +9,9 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class PaletteCandidate(StrictModel):
-    hex: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
-    label: str = Field(min_length=1, max_length=60)
-    confidence: float = Field(ge=0, le=1)
-    evidence: str = Field(min_length=1, max_length=180)
-
-
-class ProposedFeature(StrictModel):
-    kind: Literal["door", "window", "closet", "radiator", "obstacle"]
-    label: str = Field(min_length=1, max_length=80)
-    wall: Literal["north", "south", "east", "west", "interior", "unknown"]
-    offset_ratio: float = Field(ge=0, le=1)
-    width_m: float | None = Field(ge=0.1, le=8)
-    depth_m: float | None = Field(ge=0.02, le=8)
-    height_m: float | None = Field(ge=0.1, le=8)
-    elevation_m: float | None = Field(ge=0, le=8)
-    confidence: float = Field(ge=0, le=1)
-    evidence: str = Field(min_length=1, max_length=180)
-
-
 class NormalizedPoint(StrictModel):
     x: float = Field(ge=0, le=1)
     y: float = Field(ge=0, le=1)
-
-
-class DetectedCorner(StrictModel):
-    frame_index: int = Field(ge=1, le=3)
-    position: NormalizedPoint
-    kind: Literal["wall_floor", "wall_ceiling", "wall_wall", "opening", "other"]
-    confidence: float = Field(ge=0, le=1)
-    evidence: str = Field(min_length=1, max_length=180)
-
-
-class DetectedSurface(StrictModel):
-    frame_index: int = Field(ge=1, le=3)
-    kind: Literal["wall", "floor", "ceiling"]
-    polygon: list[NormalizedPoint] = Field(min_length=3, max_length=8)
-    confidence: float = Field(ge=0, le=1)
-    evidence: str = Field(min_length=1, max_length=180)
-
-
-class DimensionEstimate(StrictModel):
-    dimension: Literal["width", "length", "height"]
-    meters: float | None
-    confidence: float = Field(ge=0, le=1)
-    basis: Literal["confirmed_reference", "visual_estimate", "insufficient_evidence"]
-    evidence: str = Field(min_length=1, max_length=180)
-
-    @field_validator("meters")
-    @classmethod
-    def sensible_estimate(cls, value: float | None) -> float | None:
-        if value is not None and not 0.1 <= value <= 30:
-            raise ValueError("dimension estimates must be between 0.1 and 30 meters")
-        return value
-
-
-class RoomGeometryDraft(StrictModel):
-    width_m: float | None
-    length_m: float | None
-    height_m: float | None
-    notes: list[str] = Field(max_length=8)
-    features: list[ProposedFeature] = Field(max_length=12)
-
-    @field_validator("width_m", "length_m", "height_m")
-    @classmethod
-    def sensible_room_dimension(cls, value: float | None) -> float | None:
-        if value is not None and not 0.1 <= value <= 30:
-            raise ValueError("room dimensions must be between 0.1 and 30 meters")
-        return value
-
-
-class RoomAIResult(StrictModel):
-    schema_version: Literal["1.0"]
-    processing_status: Literal["complete", "partial"]
-    palette: list[PaletteCandidate] = Field(min_length=1, max_length=5)
-    room: RoomGeometryDraft
-    corners: list[DetectedCorner] = Field(max_length=24)
-    surfaces: list[DetectedSurface] = Field(max_length=12)
-    dimension_estimates: list[DimensionEstimate] = Field(min_length=3, max_length=3)
-    uncertainties: list[str] = Field(max_length=12)
-
-    @model_validator(mode="after")
-    def one_estimate_per_dimension(self) -> "RoomAIResult":
-        if {estimate.dimension for estimate in self.dimension_estimates} != {"width", "length", "height"}:
-            raise ValueError("dimension_estimates must contain width, length, and height exactly once")
-        return self
 
 
 class TracedWall(StrictModel):
@@ -228,6 +145,93 @@ class UrlImportRequest(StrictModel):
     url: HttpUrl
 
 
+class DormResearchRequest(StrictModel):
+    project_id: str = Field(min_length=1, max_length=120, pattern=r"^[a-zA-Z0-9_-]+$")
+    college: str = Field(min_length=2, max_length=160)
+    residence_hall: str = Field(min_length=2, max_length=160)
+    room_type: str | None = Field(default=None, max_length=120)
+    urls: list[HttpUrl] = Field(default_factory=list, max_length=5)
+
+
+class DormDimensionEvidence(StrictModel):
+    source_url: str
+    quote: str = Field(min_length=1, max_length=240)
+
+
+class DormItemExtraction(StrictModel):
+    name: str = Field(min_length=1, max_length=120)
+    category: Literal["bed", "desk", "dresser", "wardrobe", "chair", "bookshelf", "mini_fridge", "other"]
+    width_m: float | None
+    depth_m: float | None
+    height_m: float | None
+    quantity: int = Field(ge=1, le=8)
+    included_with_room: bool
+    confidence: float = Field(ge=0, le=1)
+    evidence: list[DormDimensionEvidence] = Field(max_length=4)
+
+    @field_validator("width_m", "depth_m", "height_m")
+    @classmethod
+    def sensible_item_dimension(cls, value: float | None) -> float | None:
+        if value is not None and not 0.02 <= value <= 10:
+            raise ValueError("dorm item dimensions must be between 0.02 and 10 meters")
+        return value
+
+
+class DormResearchAIResult(StrictModel):
+    schema_version: Literal["1.0"]
+    processing_status: Literal["complete", "partial"]
+    college: str = Field(min_length=2, max_length=160)
+    residence_hall: str | None = Field(max_length=160)
+    room_type: str | None = Field(max_length=160)
+    room_width_m: float | None
+    room_length_m: float | None
+    room_height_m: float | None
+    room_confidence: float = Field(ge=0, le=1)
+    room_evidence: list[DormDimensionEvidence] = Field(max_length=6)
+    items: list[DormItemExtraction] = Field(max_length=20)
+    uncertainties: list[str] = Field(max_length=12)
+
+    @field_validator("room_width_m", "room_length_m", "room_height_m")
+    @classmethod
+    def sensible_room_dimension(cls, value: float | None) -> float | None:
+        if value is not None and not 0.5 <= value <= 30:
+            raise ValueError("dorm room dimensions must be between 0.5 and 30 meters")
+        return value
+
+
+class LayoutPositionSummary(StrictModel):
+    item_id: str = Field(min_length=1, max_length=160)
+    name: str = Field(min_length=1, max_length=160)
+    category: str = Field(min_length=1, max_length=80)
+    x_m: float = Field(ge=0, le=30)
+    y_m: float = Field(ge=0, le=30)
+    rotation_degrees: int = Field(ge=0, le=359)
+
+
+class LayoutCandidateSummary(StrictModel):
+    candidate_id: str = Field(min_length=1, max_length=60, pattern=r"^[a-z0-9_-]+$")
+    label: str = Field(min_length=1, max_length=120)
+    placed_count: int = Field(ge=0, le=200)
+    unplaced_count: int = Field(ge=0, le=200)
+    positions: list[LayoutPositionSummary] = Field(max_length=200)
+
+
+class RecommendLayoutRequest(StrictModel):
+    project_id: str = Field(min_length=1, max_length=120, pattern=r"^[a-zA-Z0-9_-]+$")
+    room_type: str = Field(max_length=120)
+    room_width_m: float = Field(gt=0, le=30)
+    room_length_m: float = Field(gt=0, le=30)
+    priorities: list[str] = Field(max_length=12)
+    candidates: list[LayoutCandidateSummary] = Field(min_length=1, max_length=3)
+
+
+class LayoutRecommendationAIResult(StrictModel):
+    schema_version: Literal["1.0"]
+    processing_status: Literal["complete", "partial"]
+    candidate_id: str = Field(min_length=1, max_length=60)
+    rationale: str = Field(min_length=1, max_length=360)
+
+
 class ProposalChangeInput(StrictModel):
     change_id: str = Field(min_length=1, max_length=120)
     deterministic_reason: str = Field(min_length=1, max_length=600)
@@ -302,42 +306,3 @@ class AcceptInviteRequest(StrictModel):
 class UpdateInviteProjectRequest(StrictModel):
     project: dict[str, Any]
     expected_revision: int = Field(ge=1)
-
-
-class SettlementPerson(StrictModel):
-    id: str = Field(min_length=1, max_length=120)
-    name: str = Field(min_length=1, max_length=60)
-
-
-class SettlementExpense(StrictModel):
-    item_id: str = Field(min_length=1, max_length=160)
-    label: str = Field(min_length=1, max_length=180)
-    paid_by_person_id: str = Field(min_length=1, max_length=120)
-    amount_cents: int = Field(ge=1, le=100_000_000)
-
-
-class SettlementPreviewRequest(StrictModel):
-    project_id: str = Field(min_length=1, max_length=120, pattern=r"^[a-zA-Z0-9_-]+$")
-    people: list[SettlementPerson] = Field(min_length=2, max_length=20)
-    expenses: list[SettlementExpense] = Field(min_length=1, max_length=200)
-    currency: Literal["USD"] = "USD"
-
-    @model_validator(mode="after")
-    def references_known_people(self) -> "SettlementPreviewRequest":
-        ids = [person.id for person in self.people]
-        if len(ids) != len(set(ids)):
-            raise ValueError("roommates must have unique IDs")
-        if any(expense.paid_by_person_id not in ids for expense in self.expenses):
-            raise ValueError("every expense payer must be a project roommate")
-        return self
-
-
-class CreatePaymentRequest(StrictModel):
-    transfer_id: str = Field(min_length=1, max_length=120)
-    creditor_alias: str = Field(min_length=4, max_length=35)
-    debtor_alias: str = Field(min_length=4, max_length=35)
-    alias_type: Literal["MOBL", "EMAIL"] = "MOBL"
-
-
-class DemoPaymentDecision(StrictModel):
-    decision: Literal["accept", "reject"]

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { itemBounds, rotatedFootprint } from "./calculations";
 import { createDemoProject } from "./demo";
-import { normalizeRotation, snapItemPosition, snapPosition, snapRotation, stepPosition } from "./snap";
+import { normalizeRotation, snapItemPlacement, snapItemPosition, snapItemToNeighbors, snapPosition, snapRotation, stepPosition } from "./snap";
 import { METERS_PER_FOOT } from "./units";
 
 const room = { width: 3.66, length: 3.05 };
@@ -52,6 +53,44 @@ describe("snap to grid", () => {
     const demo = createDemoProject();
     demo.products = demo.products.map((product) => product.id === "shortlist-flintan" ? { ...product, dimensions: { width: null, depth: null, height: null } } : product);
     expect(snapItemPosition(demo, "item-chair", { x: 1.234, y: 2.345 }, 0.5)).toEqual({ x: 1.234, y: 2.345 });
+  });
+});
+
+describe("snap to furniture", () => {
+  it("places an item flush beside a nearby item without requiring a grid line", () => {
+    const demo = createDemoProject();
+    const desk = demo.items.find((item) => item.id === "item-desk")!;
+    const chair = demo.items.find((item) => item.id === "item-chair")!;
+    const deskBounds = itemBounds(demo, desk)!;
+    const chairFootprint = rotatedFootprint(demo.products.find((product) => product.id === chair.productId)!.dimensions, chair.transform!.rotationZ)!;
+    const target = { x: deskBounds.maxX + chairFootprint.width / 2 + 0.06, y: desk.transform!.position.y };
+
+    const snapped = snapItemToNeighbors(demo, chair.id, target);
+
+    expect(snapped.snappedX).toBe(true);
+    expect(snapped.position.x - chairFootprint.width / 2).toBeCloseTo(deskBounds.maxX, 4);
+  });
+
+  it("lets furniture snapping override the grid only on the attached axis", () => {
+    const demo = createDemoProject();
+    const desk = demo.items.find((item) => item.id === "item-desk")!;
+    const chair = demo.items.find((item) => item.id === "item-chair")!;
+    const deskBounds = itemBounds(demo, desk)!;
+    const chairFootprint = rotatedFootprint(demo.products.find((product) => product.id === chair.productId)!.dimensions, chair.transform!.rotationZ)!;
+    const target = { x: deskBounds.maxX + chairFootprint.width / 2 + 0.04, y: desk.transform!.position.y + 0.08 };
+    const gridOnly = snapItemPosition(demo, chair.id, target, 0.5);
+
+    const snapped = snapItemPlacement(demo, chair.id, target, { grid: true, furniture: true, cell: 0.5 });
+
+    expect(snapped.x - chairFootprint.width / 2).toBeCloseTo(deskBounds.maxX, 4);
+    expect(snapped.x).not.toBe(gridOnly.x);
+    expect(snapped.y).toBe(gridOnly.y);
+  });
+
+  it("does not pull an item toward distant furniture", () => {
+    const demo = createDemoProject();
+    const target = { x: 0.4, y: 0.4 };
+    expect(snapItemToNeighbors(demo, "item-chair", target).position).toEqual(target);
   });
 });
 

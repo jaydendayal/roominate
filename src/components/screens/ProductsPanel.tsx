@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { AlertCircle, Box, Check, Download, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Sparkles, Store, Trash2, Upload, Users } from "lucide-react";
+import { AlertCircle, Box, Check, Download, ImagePlus, Link2, LoaderCircle, PackagePlus, Plus, Search, ShoppingCart, Sparkles, Store, Trash2, Upload } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { apiFetch, normalizeImageUpload } from "@/lib/api";
 import { cents, productFor } from "@/lib/calculations";
@@ -13,7 +13,6 @@ import { ShoppingDiscovery } from "./ShoppingDiscovery";
 import { RetailerCheckout } from "./RetailerCheckout";
 import { ProductModelPreview } from "../ProductModelPreview";
 import { initialProductPlacement } from "@/lib/discovery";
-import { SettlementPanel } from "./SettlementPanel";
 
 interface ProductDraft {
   name: string;
@@ -112,7 +111,7 @@ function extractedDraft(result: ProductExtractionResponse, source: "url" | "scre
 }
 
 export function ProductsPanel({ project, issues, update }: { project: Project; issues: Issue[]; update: (updater: (project: Project) => Project) => void }) {
-  const [tab, setTab] = useState<"shop" | "import" | "cart" | "checkout" | "settle">("shop");
+  const [tab, setTab] = useState<"shop" | "import" | "cart" | "checkout">("shop");
   const [importType, setImportType] = useState<"url" | "screenshot">("url");
   const [url, setUrl] = useState("");
   const [draft, setDraft] = useState<ProductDraft | null>(null);
@@ -235,7 +234,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       <div className="segment-tabs">
         <button className={tab === "shop" ? "active" : ""} onClick={() => setTab("shop")}><Store size={16} /> Shop</button>
         <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload size={16} /> Import</button>
-        <button className={tab === "cart" || tab === "checkout" || tab === "settle" ? "active" : ""} onClick={() => setTab("cart")}><ShoppingCart size={16} /> Group cart <span>{cartItems.length}</span></button>
+        <button className={tab === "cart" || tab === "checkout" ? "active" : ""} onClick={() => setTab("cart")}><ShoppingCart size={16} /> Group cart <span>{cartItems.length}</span></button>
       </div>
 
       {tab === "shop" && <ShoppingDiscovery project={project} onAdd={(product, placement, colorSelection) => { addDiscoveredProduct(product, placement, colorSelection); setTab("cart"); }} onImport={() => { setImportType("url"); setDraft(null); setTab("import"); }} />}
@@ -276,7 +275,7 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
       </div>}
 
       {tab === "cart" && <section className="panel-surface cart-panel">
-        <div className="panel-heading"><div><p className="eyebrow">Shared group cart</p><h2>Who’s bringing what</h2></div><div className="panel-heading-actions"><span className="source-chip confirmed">{project.people.length} collaborators</span><button className="secondary-button small" disabled={!cartItems.length} onClick={() => downloadShoppingList(project)}><Download size={14} /> Export shopping list</button><button className="secondary-button small" disabled={!cartItems.length || project.people.length < 2} onClick={() => setTab("settle")}><Users size={14} /> Settle expenses</button><button className="primary-button small" disabled={!cartItems.length} onClick={() => setTab("checkout")}><ShoppingCart size={14} /> Checkout by store</button></div></div>
+        <div className="panel-heading"><div><p className="eyebrow">Shared group cart</p><h2>Who’s bringing what</h2></div><div className="panel-heading-actions"><span className="source-chip confirmed">{project.people.length} collaborators</span><button className="secondary-button small" disabled={!cartItems.length} onClick={() => downloadShoppingList(project)}><Download size={14} /> Export shopping list</button><button className="primary-button small" disabled={!cartItems.length} onClick={() => setTab("checkout")}><ShoppingCart size={14} /> Checkout by store</button></div></div>
         <div className="cart-table">
           <div className="cart-table-head"><span>Item</span><span>Buyer</span><span>Fit</span><span>Price</span><span /></div>
           {cartItems.map((item) => {
@@ -289,7 +288,6 @@ export function ProductsPanel({ project, issues, update }: { project: Project; i
         {!cartItems.length && <div className="empty-state"><ShoppingCart size={28} /><h3>The group cart is empty</h3><button className="secondary-button" onClick={() => setTab("shop")}>Browse the shop</button></div>}
       </section>}
       {tab === "checkout" && <RetailerCheckout project={project} issues={issues} onBack={() => setTab("cart")} />}
-      {tab === "settle" && <SettlementPanel project={project} onBack={() => setTab("cart")} />}
     </div>
   );
 }

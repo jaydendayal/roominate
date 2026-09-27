@@ -9,8 +9,9 @@ import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { LengthInput } from "./LengthInput";
 import { calculateIssues, collidingItemIds, featureWall, itemElevation, itemExceedsRoom, itemExceedsRoomBox, itemHasConflict, productFor, settledElevation, stackedElevation } from "@/lib/calculations";
 import { visualProfileFor } from "@/lib/productModels";
+import { MAX_BED_LOFT_METERS } from "@/lib/beds";
 import { floorGridSegments, roomPolygon, wallSegments } from "@/lib/roomShape";
-import { normalizeRotation, snapItemPosition, snapRotation, stepPosition } from "@/lib/snap";
+import { normalizeRotation, snapItemPlacement, snapRotation, stepPosition } from "@/lib/snap";
 import type { Issue, Item, Project, Room, RoomFeature, Vec2 } from "@/lib/types";
 import { gridOptions } from "@/lib/units";
 import { FurnitureModel } from "./FurnitureModel";
@@ -117,7 +118,7 @@ function FloorGrid({ room, cell }: { room: Pick<Room, "width" | "length" | "outl
 }
 
 function GridScaleLegend({ showMovement }: { showMovement: boolean }) {
-  const { unitSystem, setUnitSystem, gridSize, setGridSize, snapToGrid, setSnapToGrid, stepMoves, setStepMoves, moveStep, setMoveStep, objectUnit } = useUnitPreferences();
+  const { unitSystem, setUnitSystem, gridSize, setGridSize, snapToGrid, setSnapToGrid, snapToFurniture, setSnapToFurniture, stepMoves, setStepMoves, moveStep, setMoveStep, objectUnit } = useUnitPreferences();
   return (
     <div className="grid-scale" role="group" aria-label="Grid scale, units, and movement">
       <div className="grid-scale-row">
@@ -138,6 +139,10 @@ function GridScaleLegend({ showMovement }: { showMovement: boolean }) {
           <label className="snap-toggle" title="Movement aligns to grid lines and rotation uses 15-degree increments">
             <input type="checkbox" checked={snapToGrid} onChange={(event) => setSnapToGrid(event.target.checked)} />
             <span>Snap grid + 15°</span>
+          </label>
+          <label className="snap-toggle" title="Attach a nearby edge flush to the side of another item, even when that edge is off-grid">
+            <input type="checkbox" checked={snapToFurniture} onChange={(event) => setSnapToFurniture(event.target.checked)} />
+            <span>Snap furniture</span>
           </label>
           <div className="step-toggle" title="While dragging, items move one step of this distance at a time from where they started">
             <label>
@@ -336,6 +341,7 @@ function FurnitureItem({
   const [rotatingActive, setRotatingActive] = useState(false);
   if (!product || !position || dimensions?.width == null || dimensions.depth == null || dimensions.height == null) return null;
   const itemHeight = dimensions.height;
+  const bed = product.category.toLowerCase() === "bed";
   const rotationZ = item.transform?.rotationZ ?? 0;
   const rotationRadius = Math.hypot(dimensions.width, dimensions.depth) / 2 + 0.16;
 
@@ -348,7 +354,7 @@ function FurnitureItem({
     : conflict || itemExceedsRoom(project, item);
   const color = selected ? "#b7b5e4" : tintConflict ? CONFLICT_TINT : item.acquisitionStatus === "owned" ? "#aaa6b3" : personTone(project, item.ownerId).fill;
   // Shortlist products use their own model in the item's chosen finish; others use their imported profile.
-  const modelProps = { category: product.category, name: product.name, dimensions: { width: dimensions.width, depth: dimensions.depth, height: dimensions.height }, profile: visualProfileFor(product, item.colorSelection) };
+  const modelProps = { category: product.category, name: product.name, dimensions: { width: dimensions.width, depth: dimensions.depth, height: dimensions.height }, profile: visualProfileFor(product, item.colorSelection), legExtension: bed ? elevation : 0 };
 
   // Follows one pointer until release (commit) or cancel, then reports back once.
   const trackPointer = (pointerId: number, move: (pointerEvent: PointerEvent) => void, finish: (commit: boolean) => void) => {
@@ -423,7 +429,11 @@ function FurnitureItem({
       const dx = pointerEvent.clientX - pointer.x;
       const dy = pointerEvent.clientY - pointer.y;
       pointer = { x: pointerEvent.clientX, y: pointerEvent.clientY };
-      desired = clamp(desired + (dx * axis.x + dy * axis.y) / axis.lengthSq(), -(itemHeight - 0.05), project.room.height - 0.05);
+      desired = clamp(
+        desired + (dx * axis.x + dy * axis.y) / axis.lengthSq(),
+        bed ? 0 : -(itemHeight - 0.05),
+        bed ? MAX_BED_LOFT_METERS : project.room.height - 0.05,
+      );
       // Moving down into another item stops on top of it; near the floor, snap onto it.
       let next = stackedElevation(project, item, desired, ignored);
       if (Math.abs(next) < FLOOR_SNAP) next = 0;
@@ -620,7 +630,7 @@ function ScreenRightReporter({ screenRightRef }: { screenRightRef: NonNullable<R
   return null;
 }
 
-function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, screenRightRef, gridSize, snapToGrid, moveStep }: RoomCanvasProps & { gridSize: number; snapToGrid: boolean; moveStep: number | null }) {
+function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onSelectItem, onMoveItem, cutaway, viewCommand, screenRightRef, gridSize, snapToGrid, snapToFurniture, moveStep }: RoomCanvasProps & { gridSize: number; snapToGrid: boolean; snapToFurniture: boolean; moveStep: number | null }) {
   const controls = useRef<OrbitControlsImpl | null>(null);
   const [dragging, setDragging] = useState(false);
   // While dragging, render a local preview (with live conflict colors) and save only on release.
@@ -647,11 +657,16 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
     placed.current = { ...saved, transform: { ...saved.transform, position, elevation } };
     return { itemId, position, elevation, rotationZ: from.transform?.rotationZ ?? saved.transform.rotationZ };
   };
-  const drag = (itemId: string, position: Vec2) => setPreview(settle(itemId, stepped(itemId, position)));
-  // On release: snap to the grid (if on) after stepping, then settle once more in case the snap moved it off or onto an edge.
+  const drag = (itemId: string, position: Vec2) => {
+    const steppedPosition = stepped(itemId, position);
+    setPreview(settle(itemId, snapItemPlacement(savedProject, itemId, steppedPosition, { furniture: snapToFurniture })));
+  };
+  // On release: nearby furniture edges win over the grid on the axis they attach to.
   const endDrag = (itemId: string, position: Vec2 | null) => {
     setPreview(null);
-    const final = position ? settle(itemId, snapToGrid ? snapItemPosition(savedProject, itemId, stepped(itemId, position), gridSize) : stepped(itemId, position)) : null;
+    const steppedPosition = position ? stepped(itemId, position) : null;
+    const snappedPosition = steppedPosition ? snapItemPlacement(savedProject, itemId, steppedPosition, { grid: snapToGrid, furniture: snapToFurniture, cell: gridSize }) : null;
+    const final = snappedPosition ? settle(itemId, snappedPosition) : null;
     placed.current = null;
     if (final) onMoveItem?.(itemId, final.position, final.elevation, final.rotationZ);
   };
@@ -679,7 +694,7 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
     const transform = savedItem(itemId)?.transform;
     if (!transform || rotationZ == null) return;
     const finalRotation = snapToGrid ? snapRotation(rotationZ) : normalizeRotation(rotationZ);
-    const position = snapToGrid ? snapItemPosition(savedProject, itemId, transform.position, gridSize, finalRotation) : transform.position;
+    const position = snapItemPlacement(savedProject, itemId, transform.position, { grid: snapToGrid, furniture: snapToFurniture, cell: gridSize, rotationZ: finalRotation });
     onMoveItem?.(itemId, position, transform.elevation ?? 0, finalRotation);
   };
   const wallColor = tintedTone(WALL_TONE, project.room.palette.find((swatch) => swatch.label.toLowerCase().includes("wall"))?.hex);
@@ -731,7 +746,7 @@ function Scene({ project: savedProject, issues: savedIssues, selectedItemId, onS
 }
 
 export function RoomCanvas(props: RoomCanvasProps) {
-  const { gridSize, snapToGrid, stepMoves, moveStep } = useUnitPreferences();
+  const { gridSize, snapToGrid, snapToFurniture, stepMoves, moveStep } = useUnitPreferences();
   return (
     <div className="room-canvas">
       <Canvas
@@ -744,7 +759,7 @@ export function RoomCanvas(props: RoomCanvasProps) {
           gl.localClippingEnabled = true;
         }}
       >
-        <Scene {...props} gridSize={gridSize} snapToGrid={snapToGrid} moveStep={stepMoves ? moveStep : null} />
+        <Scene {...props} gridSize={gridSize} snapToGrid={snapToGrid} snapToFurniture={snapToFurniture} moveStep={stepMoves ? moveStep : null} />
       </Canvas>
       <GridScaleLegend showMovement={Boolean(props.onMoveItem)} />
     </div>

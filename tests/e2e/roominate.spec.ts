@@ -22,6 +22,8 @@ test("desktop demo supports review, proposal decisions, apply, and undo", async 
   await page.getByRole("button", { name: "Open room" }).first().click();
   await expect(page.getByRole("heading", { name: "In the room" })).toBeVisible();
   await expect(page.locator("canvas")).toBeVisible();
+  await page.getByRole("checkbox", { name: "Snap furniture" }).click();
+  await expect(page.getByRole("checkbox", { name: "Snap furniture" })).toBeChecked();
 
   await page.getByRole("button", { name: "Issues" }).first().click();
   await expect(page.getByRole("heading", { name: /things deserve attention/ })).toBeVisible();
@@ -42,6 +44,28 @@ test("desktop demo supports review, proposal decisions, apply, and undo", async 
   await expect(page.getByRole("button", { name: "Generate Better Cart" })).toBeVisible();
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.getByRole("heading", { name: "Choose what to apply" })).toBeVisible();
+});
+
+test("AI layout generation selects a collision-tested whole-room candidate", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific layout flow");
+  await page.route("**/api/v1/recommend-layout", (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.candidates.length).toBeGreaterThan(0);
+    expect(body.candidates[0].positions.length).toBeGreaterThan(0);
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        status: "complete", schema_version: "1.0", processing_status: "complete",
+        candidate_id: body.candidates[0].candidate_id,
+        rationale: "Selected the clearest collision-tested arrangement.",
+      }),
+    });
+  });
+  await page.getByRole("button", { name: "Open room" }).first().click();
+  await page.getByRole("button", { name: "Generate optimal layout" }).click();
+  await expect(page.getByText(/Selected the clearest collision-tested arrangement/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/locked items stayed fixed/i)).toBeVisible();
 });
 
 test("URL import preserves a blocked source and accepts confirmed manual fields", async ({ page }, testInfo) => {
@@ -139,98 +163,6 @@ test("shop items are placed into the 3D room when added", async ({ page }, testI
   })).toBe(true);
 });
 
-test("group cart creates and resolves a Visa Request to Pay", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific settlement flow");
-  await page.route("**/api/v1/visa/request-to-pay/status", (route) => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({ provider: "visa_direct_request_to_pay", mode: "demo", configured: false, message: "Local demonstration; no money moves." }),
-  }));
-  await page.route("**/api/v1/settlements/preview", (route) => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({
-      id: "settlement-e2e",
-      total_cents: 59500,
-      calculation: "equal_split_exact_cents",
-      visa: { provider: "visa_direct_request_to_pay", mode: "demo", configured: false, message: "Local demonstration; no money moves." },
-      transfers: [{ id: "transfer-e2e", debtor_id: "person-maya", debtor_name: "Maya", creditor_id: "person-jay", creditor_name: "Jay", amount_cents: 4250, description: "Maya reimburses Jay" }],
-    }),
-  }));
-  await page.route("**/api/v1/settlements/settlement-e2e/requests", (route) => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({ id: "request-e2e", transfer_id: "transfer-e2e", provider: "demo", status: "pending", creditor_alias: "+1••••00", debtor_alias: "+1••••99", amount_cents: 4250 }),
-  }));
-  await page.route("**/api/v1/payment-requests/request-e2e/demo-decision", (route) => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({ id: "request-e2e", transfer_id: "transfer-e2e", provider: "demo", status: "completed", creditor_alias: "+1••••00", debtor_alias: "+1••••99" }),
-  }));
-
-  await page.getByRole("button", { name: "Open room" }).first().click();
-  await page.getByRole("button", { name: "Products" }).first().click();
-  await page.getByRole("button", { name: "Group cart" }).first().click();
-  await page.getByRole("button", { name: "Settle expenses" }).click();
-  await expect(page.getByRole("heading", { name: "Settle shared room expenses." })).toBeVisible();
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Calculate reimbursements" }).click();
-  await expect(page.getByText("$42.50")).toBeVisible();
-  await page.getByLabel("Maya").fill("+15551110099");
-  await page.getByLabel("Jay").fill("+15551110000");
-  await page.getByRole("button", { name: "Request with Visa" }).click();
-  await expect(page.getByText("Local demonstration—no money moved")).toBeVisible();
-  await page.getByRole("button", { name: "Simulate accept" }).click();
-  await expect(page.getByText("completed", { exact: true })).toBeVisible();
-});
-
-test("room analysis turns detected structure into reviewable 3D features", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific room reconstruction flow");
-  await page.route("**/api/v1/analyze-room", async (route) => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({
-      status: "complete",
-      schema_version: "1.0",
-      message: "Review detected structure.",
-      palette: [{ hex: "#E5E0D8", label: "wall", confidence: 0.8, evidence: "Rear wall" }],
-      room: {
-        width_m: 3,
-        length_m: 3.4,
-        height_m: 2.4,
-        notes: [],
-        features: [{
-          kind: "window", label: "Detected rear window", wall: "north", offset_ratio: 0.68,
-          width_m: 1.1, depth_m: 0.08, height_m: 1, elevation_m: 0.9,
-          confidence: 0.86, evidence: "Frame 1 rear wall opening",
-        }],
-      },
-      corners: [],
-      surfaces: [],
-      dimension_estimates: [
-        { dimension: "width", meters: 3, confidence: 1, basis: "confirmed_reference", evidence: "Confirmed" },
-        { dimension: "length", meters: 3.4, confidence: 1, basis: "confirmed_reference", evidence: "Confirmed" },
-        { dimension: "height", meters: 2.4, confidence: 1, basis: "confirmed_reference", evidence: "Confirmed" },
-      ],
-      uncertainties: [],
-    }),
-  }));
-
-  await page.getByRole("button", { name: "Create a room" }).click();
-  await page.locator('input[type="file"][multiple]').setInputFiles({
-    name: "room.png",
-    mimeType: "image/png",
-    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
-  });
-  await page.getByRole("button", { name: "Analyze selected media" }).click();
-
-  await expect(page.getByText("Detected rear window")).toBeVisible();
-  await expect(page.getByText("1 structural feature modeled")).toBeVisible();
-  await page.getByRole("button", { name: "Confirm" }).click();
-  await expect(page.getByText(/north wall · confirmed/)).toBeVisible();
-  await expect(page.locator(".capture-canvas canvas")).toBeVisible();
-});
-
 test("floor plan scan traces an L-shaped room and scales it from a printed wall length", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific floor plan flow");
   await page.route("**/api/v1/read-floor-plan", async (route) => route.fulfill({
@@ -248,15 +180,16 @@ test("floor plan scan traces an L-shaped room and scales it from a printed wall 
   }));
 
   await page.getByRole("button", { name: "Create a room" }).click();
-  await page.getByRole("button", { name: /Scan a floor plan/ }).click();
+  await page.getByRole("button", { name: /Read a floor plan or diagram/ }).click();
   await page.getByLabel("Choose a floor plan image").setInputFiles(path.join(__dirname, "fixtures", "floor-plan-l-room.png"));
   await expect(page.getByRole("heading", { name: "Check the traced walls" })).toBeVisible();
-  // An L has six walls, lettered A to F.
+  // An L has six walls, but the simplified form shows only the one wall being measured.
+  await expect(page.locator(".plan-wall-tag")).toHaveCount(6);
+  await page.getByLabel("Choose wall to measure").selectOption("F");
   await expect(page.getByLabel(/Measured length of wall F/)).toBeVisible();
-  await expect(page.getByLabel(/Measured length of wall G/)).toHaveCount(0);
   await expect(page.getByText("Scale not measured.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Read printed dimensions" }).click();
+  await page.getByRole("button", { name: "Read printed dimensions with AI" }).click();
   await page.getByRole("list", { name: "Printed dimensions" }).getByRole("button", { name: "Use" }).click();
   await expect(page.getByText("Measured scale.")).toBeVisible();
   await expect(page.getByLabel(/Measured length of wall A/)).toHaveValue("12");
@@ -275,6 +208,115 @@ test("floor plan scan traces an L-shaped room and scales it from a printed wall 
   await page.getByLabel("Overall width").fill("24");
   await page.getByLabel("Overall width").blur();
   await expect.poll(async () => Number(await page.getByLabel("Overall length").inputValue())).toBeCloseTo(length * 2, 1);
+});
+
+test("official dorm research applies unconfirmed room and furniture dimensions", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific dorm research flow");
+  let requestCount = 0;
+  await page.route("**/api/v1/research-dorm", (route) => {
+    requestCount += 1;
+    const request = route.request().postDataJSON();
+    expect(request.college).toBe("Georgia Institute of Technology");
+    expect(request.residence_hall).toBe("Glenn Hall");
+    expect(request.room_type).toBe("Traditional double");
+    if (requestCount === 1) {
+      expect(request.urls).toEqual([]);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          status: "partial", schema_version: "1.0", processing_status: "partial",
+          college: request.college, residence_hall: request.residence_hall, room_type: null,
+          room_width_m: null, room_length_m: null, room_height_m: null, room_confidence: 0,
+          room_evidence: [], items: [], uncertainties: ["No dimensions were published on the discovered page."],
+          sources: [], discovered_sources: [{ url: "https://housing.gatech.edu/glenn", title: "Glenn Hall" }], failures: [],
+          needs_manual_sources: true,
+          message: "The automatic search found pages, but no useful dimensions. Add an official housing or furniture link.",
+        }),
+      });
+    }
+    expect(request.urls).toEqual(["https://housing.gatech.edu/glenn-dimensions"]);
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        status: "complete",
+        schema_version: "1.0",
+        processing_status: "complete",
+        college: "Georgia Institute of Technology",
+        residence_hall: "Glenn Hall",
+        room_type: "Traditional double",
+        room_width_m: 3.65,
+        room_length_m: 4.57,
+        room_height_m: 2.44,
+        room_confidence: 0.91,
+        room_evidence: [{ source_url: "https://housing.gatech.edu/glenn-dimensions", quote: "Room dimensions are 12 by 15 feet." }],
+        items: [
+          { name: "Twin Bed extra-long mattress", category: "bed", width_m: 0.9652, depth_m: 2.1717, height_m: null, quantity: 2, included_with_room: true, confidence: 0.9, evidence: [{ source_url: "https://housing.gatech.edu/glenn-dimensions", quote: "Twin extra-long mattress 38 by 85.5 inches." }] },
+          { name: "Housing-provided desk", category: "desk", width_m: 1.0668, depth_m: 0.6096, height_m: 0.762, quantity: 1, included_with_room: true, confidence: 0.9, evidence: [{ source_url: "https://housing.gatech.edu/glenn-dimensions", quote: "Desk 42 by 24 by 30 inches." }] },
+          { name: "Desk chair", category: "chair", width_m: 0.508, depth_m: 0.5842, height_m: 0.8382, quantity: 1, included_with_room: true, confidence: 0.9, evidence: [{ source_url: "https://housing.gatech.edu/glenn-dimensions", quote: "Desk chair 20 by 23 by 33 inches." }] },
+          { name: "Dresser", category: "dresser", width_m: 0.762, depth_m: 0.6096, height_m: 0.762, quantity: 1, included_with_room: true, confidence: 0.9, evidence: [{ source_url: "https://housing.gatech.edu/glenn-dimensions", quote: "Dresser 30 by 24 by 30 inches." }] },
+          { name: "Wardrobe", category: "wardrobe", width_m: 0.9144, depth_m: 0.6096, height_m: 1.9304, quantity: 1, included_with_room: true, confidence: 0.9, evidence: [{ source_url: "https://housing.gatech.edu/glenn-dimensions", quote: "Wardrobe 36 by 24 by 76 inches." }] },
+        ],
+        uncertainties: ["Confirm the room assignment and layout."],
+        sources: [{ source_url: "https://housing.gatech.edu/glenn-dimensions", raw_hash: "abc", fetched_at: "2026-09-26", fetch_method: "http" }],
+        discovered_sources: [],
+        failures: [],
+        needs_manual_sources: false,
+        message: "Review and confirm every extracted measurement before using it for fit decisions.",
+      }),
+    });
+  });
+
+  await page.getByRole("button", { name: "Create a room" }).click();
+  await page.getByLabel("School").fill("Georgia Institute of Technology");
+  await page.getByLabel("Dorm or residence hall").fill("Glenn Hall");
+  await page.getByLabel(/Room design or type/).fill("Traditional double");
+  await expect(page.getByLabel("Official housing or furniture links")).toHaveCount(0);
+  await page.getByRole("button", { name: "Search official dorm sources" }).click();
+  await expect(page.getByText(/no useful dimensions/i)).toBeVisible();
+  await page.getByRole("button", { name: "Upload diagram" }).click();
+  await expect(page.getByRole("heading", { name: "Read your room from a screenshot" })).toBeVisible();
+  await page.getByRole("button", { name: "Close floor plan scan" }).click();
+  await page.getByLabel("Official housing or furniture links").fill("https://housing.gatech.edu/glenn-dimensions");
+  await page.getByRole("button", { name: "Research with added links" }).click();
+  await expect(page.getByText("Traditional double · 91% evidence confidence")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Added to 3D room/ })).toBeVisible();
+  await expect(page.getByText(/Dorm research applied as unconfirmed evidence/)).toBeVisible();
+  await expect.poll(() => page.evaluate(() => {
+    const stored = JSON.parse(localStorage.getItem("roominate.projects.v1") ?? "{}");
+    const project = stored.projects?.find((candidate: { name: string }) => candidate.name === "Untitled room");
+    const product = project?.products.find((candidate: { name: string }) => candidate.name === "Housing-provided desk");
+    const desks = project?.items.filter((item: { productId: string }) => item.productId === product?.id) ?? [];
+    const dormProducts = project?.products.filter((candidate: { tags: string[] }) => candidate.tags.some((tag) => tag.startsWith("dorm-source-"))) ?? [];
+    const dormProductIds = new Set(dormProducts.map((candidate: { id: string }) => candidate.id));
+    const dormItems = project?.items.filter((item: { productId: string }) => dormProductIds.has(item.productId)) ?? [];
+    const bedProduct = dormProducts.find((candidate: { category: string }) => candidate.category === "bed");
+    return {
+      width: project?.room.width,
+      source: project?.room.dimensionEvidence.width.source,
+      confirmed: project?.room.dimensionEvidence.width.confirmedByUser,
+      productWidth: product?.dimensions.width,
+      placedDesks: desks.filter((item: { transform: unknown }) => item.transform).length,
+      distinctPositions: new Set(desks.map((item: { transform?: { position: { x: number; y: number } } }) => `${item.transform?.position.x},${item.transform?.position.y}`)).size,
+      dormItems: dormItems.length,
+      placedDormItems: dormItems.filter((item: { transform: unknown }) => item.transform).length,
+      beds: project?.items.filter((item: { productId: string }) => item.productId === bedProduct?.id).length,
+      bedHeight: bedProduct?.dimensions.height,
+      roomType: project?.roomType,
+    };
+  })).toEqual({ width: 3.65, source: "url", confirmed: false, productWidth: 1.0668, placedDesks: 2, distinctPositions: 2, dormItems: 10, placedDormItems: 10, beds: 2, bedHeight: 0.95, roomType: "Traditional double" });
+  await page.getByLabel(/Loft height/).fill("5");
+  await page.getByLabel(/Loft height/).blur();
+  await expect.poll(() => page.evaluate(() => {
+    const stored = JSON.parse(localStorage.getItem("roominate.projects.v1") ?? "{}");
+    const project = stored.projects?.find((candidate: { name: string }) => candidate.name === "Untitled room");
+    const bedProductIds = new Set(project?.products.filter((product: { category: string }) => product.category === "bed").map((product: { id: string }) => product.id));
+    return project?.items.filter((item: { productId: string }) => bedProductIds.has(item.productId)).map((item: { transform?: { elevation?: number } }) => item.transform?.elevation);
+  })).toEqual([1.524, 1.524]);
+  await page.getByRole("button", { name: "Generate optimal layout" }).click();
+  await expect(page.getByText(/movable items were placed|could not fit/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Generate optimal layout" })).toBeEnabled();
 });
 
 test("phone layout keeps the 3D room and primary tabs usable without page overflow", async ({ page }, testInfo) => {

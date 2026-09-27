@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import tempfile
 import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,42 +24,39 @@ from .schemas import (
     FloorPlanAIResult,
     FurnitureVisualAIResult,
     FurnitureVisualProfile,
-    PaletteCandidate,
     ProductAIResult,
     ProductDimensions,
     ProductVisualRequest,
-    RoomAIResult,
-    RoomGeometryDraft,
     TracedWall,
     UrlImportRequest,
     ShoppingSearchRequest,
     CreateInviteRequest,
     AcceptInviteRequest,
     UpdateInviteProjectRequest,
-    SettlementPreviewRequest,
-    CreatePaymentRequest,
-    DemoPaymentDecision,
+    DormResearchAIResult,
+    DormResearchRequest,
+    LayoutRecommendationAIResult,
+    RecommendLayoutRequest,
 )
 from .settings import get_settings
-from .store import AIStore, InviteConflictError, InviteError, InviteStore, SettlementError, SettlementStore
+from .store import AIStore, InviteConflictError, InviteError, InviteStore
 from .url_reader import read_product_page
 from .shopping import AmazonCreatorsClient, RetailerConfigurationError
-from .visa_r2p import VisaR2PClient, VisaR2PError
+from .dorm_reader import fetch_dorm_page, section_chunks
 
 settings = get_settings()
 store = AIStore(settings.database_path, settings.aggregate_guard_usd, settings.max_calls_per_project)
 invite_store = InviteStore(settings.database_path)
-settlement_store = SettlementStore(settings.database_path)
 openai = OpenAIService(settings, store)
 amazon = AmazonCreatorsClient(settings)
-visa_r2p = VisaR2PClient(settings)
 
 MAX_FILE_BYTES = 8_000_000
 MAX_TOTAL_BYTES = 18_000_000
 ALLOWED_IMAGES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 ALLOWED_HEIC = {"image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"}
-ALLOWED_VIDEOS = {"video/mp4", "video/webm", "video/quicktime"}
 PROMPT_VERSION = "2026-09-26.6-parametric-product-parts"
+DORM_PROMPT_VERSION = "2026-09-26.2-room-type-matching"
+DORM_SEARCH_VERSION = "2026-09-26.2-room-type-search"
 
 
 @asynccontextmanager
@@ -84,64 +79,6 @@ async def spend_guard_handler(_, exc: SpendGuardError) -> JSONResponse:
     return JSONResponse(status_code=402, content={"detail": str(exc), "code": "spend_guard"})
 
 
-@app.exception_handler(SettlementError)
-async def settlement_error_handler(_, exc: SettlementError) -> JSONResponse:
-    return JSONResponse(status_code=422, content={"detail": str(exc), "code": "settlement_error"})
-
-
-@app.exception_handler(VisaR2PError)
-async def visa_error_handler(_, exc: VisaR2PError) -> JSONResponse:
-    return JSONResponse(status_code=502, content={"detail": str(exc), "code": "visa_r2p_error"})
-
-
-def _manual_room(confirmed: dict[str, Any], note: str) -> RoomAIResult:
-    return RoomAIResult(
-        schema_version="1.0",
-        processing_status="partial",
-        palette=[
-            PaletteCandidate(hex="#E7DFD0", label="manual warm wall", confidence=0.0, evidence="Manual fallback; not inferred from media"),
-            PaletteCandidate(hex="#A77F59", label="manual wood floor", confidence=0.0, evidence="Manual fallback; not inferred from media"),
-            PaletteCandidate(hex="#7F9186", label="manual accent", confidence=0.0, evidence="Manual fallback; not inferred from media"),
-        ],
-        room=RoomGeometryDraft(
-            width_m=confirmed.get("width_m"),
-            length_m=confirmed.get("length_m"),
-            height_m=confirmed.get("height_m"),
-            notes=[note, "Confirmed measurements are preserved as the scale anchor."],
-            features=[],
-        ),
-        corners=[],
-        surfaces=[],
-        dimension_estimates=[
-            {"dimension": key, "meters": confirmed.get(f"{key}_m"), "confidence": 1.0 if confirmed.get(f"{key}_m") else 0.0, "basis": "confirmed_reference" if confirmed.get(f"{key}_m") else "insufficient_evidence", "evidence": "User-confirmed scale reference." if confirmed.get(f"{key}_m") else "No analyzable media or scale evidence."}
-            for key in ("width", "length", "height")
-        ],
-        uncertainties=["Room corners and surfaces require visual analysis."] if not confirmed else [],
-    )
-
-
-def _video_frames(data: bytes, content_type: str) -> list[tuple[bytes, str]]:
-    executable = shutil.which("ffmpeg")
-    if not executable:
-        return []
-    suffix = ".webm" if content_type == "video/webm" else ".mov" if content_type == "video/quicktime" else ".mp4"
-    with tempfile.TemporaryDirectory(prefix="roominate-frames-") as temp:
-        root = Path(temp)
-        source = root / f"walkthrough{suffix}"
-        source.write_bytes(data)
-        pattern = root / "frame-%02d.jpg"
-        try:
-            subprocess.run(
-                [executable, "-hide_banner", "-loglevel", "error", "-i", str(source), "-vf", "fps=1/4,scale='min(1280,iw)':-2", "-frames:v", "3", str(pattern)],
-                check=True,
-                timeout=20,
-                capture_output=True,
-            )
-        except (subprocess.SubprocessError, OSError):
-            return []
-        return [(path.read_bytes(), "image/jpeg") for path in sorted(root.glob("frame-*.jpg"))[:3]]
-
-
 async def _read_media(files: list[UploadFile]) -> tuple[list[tuple[bytes, str]], list[str]]:
     images: list[tuple[bytes, str]] = []
     notes: list[str] = []
@@ -149,7 +86,7 @@ async def _read_media(files: list[UploadFile]) -> tuple[list[tuple[bytes, str]],
     for upload in files[:4]:
         content_type = (upload.content_type or "").lower()
         heic = is_heic(upload.filename, content_type)
-        if content_type not in ALLOWED_IMAGES | ALLOWED_VIDEOS | ALLOWED_HEIC and not heic:
+        if content_type not in ALLOWED_IMAGES | ALLOWED_HEIC and not heic:
             raise HTTPException(status_code=415, detail=f"Unsupported media type: {content_type or 'unknown'}")
         data = await upload.read(MAX_FILE_BYTES + 1)
         if len(data) > MAX_FILE_BYTES:
@@ -163,17 +100,9 @@ async def _read_media(files: list[UploadFile]) -> tuple[list[tuple[bytes, str]],
                 notes.append(f"Converted {upload.filename or 'HEIC image'} to JPEG for analysis.")
             except ImageConversionError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
-        elif content_type in ALLOWED_IMAGES:
-            images.append((data, content_type))
         else:
-            frames = _video_frames(data, content_type)
-            images.extend(frames)
-            notes.append(f"Sampled {len(frames)} representative frames from {upload.filename or 'video'}." if frames else "Video retained, but server frame extraction is unavailable; upload still frames for AI analysis.")
+            images.append((data, content_type))
     return images[:3], notes
-
-
-def _room_response(result: RoomAIResult, status: str, message: str, usage: dict[str, int] | None = None) -> dict[str, Any]:
-    return {**result.model_dump(), "status": status, "message": message, "usage": usage or {"input_tokens": 0, "output_tokens": 0}}
 
 
 def _product_response(result: ProductAIResult, status: str, message: str, usage: dict[str, int] | None = None) -> dict[str, Any]:
@@ -190,7 +119,7 @@ def _product_response(result: ProductAIResult, status: str, message: str, usage:
 
 
 def _safe_shared_project(project: dict[str, Any]) -> dict[str, Any]:
-    """Validate the project envelope and remove browser-only private media."""
+    """Validate the project envelope and remove browser-only product screenshots."""
     try:
         cleaned = json.loads(json.dumps(project, allow_nan=False))
     except (TypeError, ValueError) as exc:
@@ -202,8 +131,7 @@ def _safe_shared_project(project: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail="The shared project needs a valid name.")
     if not isinstance(cleaned["room"], dict) or not isinstance(cleaned["products"], list) or not isinstance(cleaned["people"], list):
         raise HTTPException(status_code=422, detail="The shared project structure is invalid.")
-    # Links never carry room photos, video, screenshots, or a nested bearer token.
-    cleaned["room"]["mediaAssets"] = []
+    # Links never carry product screenshots or a nested bearer token.
     cleaned.pop("collaboration", None)
     for product in cleaned["products"]:
         if isinstance(product, dict):
@@ -285,7 +213,7 @@ def _fallback_visual_profile(name: str | None, category: str | None = None, note
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"status": "ok", "openai_configured": openai.enabled, "amazon_creators_configured": amazon.configured, "visa_r2p": visa_r2p.public_status(), "model": settings.openai_model, "spend": store.stats()}
+    return {"status": "ok", "openai_configured": openai.enabled, "amazon_creators_configured": amazon.configured, "model": settings.openai_model, "spend": store.stats()}
 
 
 @app.post("/api/v1/media/normalize-heic", response_class=Response)
@@ -310,72 +238,6 @@ async def search_shopping(request: ShoppingSearchRequest) -> dict[str, Any]:
         return {"provider": "amazon", "available": False, "message": str(exc), "browse_url": "https://www.amazon.com/", "listings": []}
     except httpx.HTTPError:
         return {"provider": "amazon", "available": False, "message": "Amazon discovery is temporarily unavailable. Existing imports and retailer checkout still work.", "browse_url": "https://www.amazon.com/", "listings": []}
-
-
-@app.post("/api/v1/analyze-room")
-async def analyze_room(
-    project_id: Annotated[str, Form(min_length=1, max_length=120, pattern=r"^[a-zA-Z0-9_-]+$")],
-    confirmed_dimensions: Annotated[str, Form()],
-    files: Annotated[list[UploadFile], File()] = [],
-) -> dict[str, Any]:
-    try:
-        confirmed = json.loads(confirmed_dimensions)
-        confirmed = {key: float(value) for key, value in confirmed.items() if key in {"width_m", "length_m", "height_m"} and value is not None}
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="confirmed_dimensions must be a JSON object of numeric meter values") from exc
-    images, video_notes = await _read_media(files)
-    cache_mode = f"{settings.openai_model}:{settings.image_detail}" if openai.enabled else "manual"
-    cache_key = store.cache_key("room-analysis", PROMPT_VERSION, [cache_mode, json.dumps(confirmed, sort_keys=True)] + [data for data, _ in images])
-    if cached := store.get_cached(cache_key):
-        cached["status"] = "cached"
-        return cached
-    if not openai.enabled or not images:
-        reason = "OPENAI_API_KEY is not configured." if not openai.enabled else "No analyzable image or video frames were supplied."
-        result = _manual_room(confirmed, reason)
-        response = _room_response(result, "manual_fallback", "Manual reconstruction is ready. " + " ".join(video_notes))
-        store.put_cached(cache_key, "room-analysis", response)
-        return response
-    prompt = (
-        "Analyze the ordered room frames as views of one room. Return only visible, reviewable structure and a small color palette. "
-        "Detect strong wall-floor, wall-ceiling, wall-wall, and opening corners as normalized image coordinates where top-left is (0,0). "
-        "Trace only clearly visible wall, floor, and ceiling polygons; do not invent points behind furniture or outside a frame. "
-        "List visible doors, windows, closets, radiators, and fixed obstacles as proposed features. Assign a cardinal wall only when overlapping views make it defensible; otherwise use unknown. "
-        "For a wall feature, offset_ratio is its approximate center along that wall from left to right in the clearest frame. For an interior feature it is an approximate horizontal room fraction. "
-        "Return feature dimensions only when a confirmed room scale or explicit reference supports them; otherwise use null. Elevation is zero for floor-standing features and may be estimated for windows only when supported. "
-        "Use confirmed dimensions as authoritative scale anchors. Estimate another dimension only when image evidence plus an anchor makes it defensible; "
-        "otherwise return null with insufficient_evidence. Never present monocular visual guesses as measurements. "
-        "Report occlusion, lens distortion, unmatched views, and missing boundaries in uncertainties. Evidence must identify a 1-based frame number and visible region. "
-        "Palette colors are approximate because lighting and cameras shift color."
-    )
-    try:
-        result, usage = await openai.structured_response(
-            project_id=project_id,
-            operation="room-analysis",
-            system_prompt=prompt,
-            user_text=f"Confirmed meter dimensions: {json.dumps(confirmed)}. Video processing notes: {' '.join(video_notes) or 'none'}.",
-            result_type=RoomAIResult,
-            images=images,
-            max_output_tokens=2200,
-        )
-        # Code, not the model, enforces confirmed scale values.
-        result.room.width_m = confirmed.get("width_m", result.room.width_m)
-        result.room.length_m = confirmed.get("length_m", result.room.length_m)
-        result.room.height_m = confirmed.get("height_m", result.room.height_m)
-        for estimate in result.dimension_estimates:
-            confirmed_value = confirmed.get(f"{estimate.dimension}_m")
-            if confirmed_value is not None:
-                estimate.meters = confirmed_value
-                estimate.confidence = 1.0
-                estimate.basis = "confirmed_reference"
-                estimate.evidence = "User-confirmed measurement supplied as the scale anchor."
-        response = _room_response(result, "complete" if result.processing_status == "complete" else "partial", "Review every inferred feature before confirming it.", usage)
-        store.put_cached(cache_key, "room-analysis", response)
-        return response
-    except SpendGuardError:
-        raise
-    except Exception as exc:
-        result = _manual_room(confirmed, f"Model output was unavailable or invalid: {type(exc).__name__}.")
-        return _room_response(result, "manual_fallback", "Analysis failed safely; the confirmed room remains editable.")
 
 
 _TRACED_WALLS = TypeAdapter(list[TracedWall])
@@ -471,6 +333,135 @@ def _metadata_product(metadata: dict[str, object], source_url: str, note: str) -
         evidence=["Page metadata retained", note],
         uncertainties=["Dimensions require confirmation", "Displayed price may exclude shipping and tax"],
     )
+
+
+@app.post("/api/v1/research-dorm")
+async def research_dorm(request: DormResearchRequest) -> dict[str, Any]:
+    discovered_sources: list[dict[str, str]] = []
+    requested_urls = [str(url) for url in request.urls]
+    if not requested_urls:
+        if not openai.enabled:
+            raise HTTPException(status_code=503, detail="OPENAI_API_KEY is required to search for official dorm sources.")
+        search_cache_key = store.cache_key(
+            "dorm-source-search",
+            DORM_SEARCH_VERSION,
+            [settings.openai_model, request.college.casefold(), request.residence_hall.casefold(), (request.room_type or "").casefold()],
+        )
+        cached_search = store.get_cached(search_cache_key)
+        if cached_search:
+            search_sources = cached_search.get("sources", [])
+        else:
+            search_sources, _ = await openai.discover_dorm_sources(
+                project_id=request.project_id,
+                college=request.college,
+                residence_hall=request.residence_hall,
+                room_type=request.room_type,
+            )
+            store.put_cached(search_cache_key, "dorm-source-search", {"sources": search_sources})
+        blocked = {"reddit.com", "wikipedia.org", "facebook.com", "instagram.com", "youtube.com", "tiktok.com", "apartments.com"}
+        hall_tokens = [token for token in f"{request.residence_hall} {request.room_type or ''}".lower().split() if len(token) > 2]
+        scored: list[tuple[int, dict[str, str]]] = []
+        for source in search_sources:
+            try:
+                parsed = urlparse(source["url"])
+                host = (parsed.hostname or "").lower()
+                if parsed.scheme != "https" or any(host == domain or host.endswith(f".{domain}") for domain in blocked):
+                    continue
+                academic = host.endswith(".edu") or ".edu." in host or ".ac." in host
+                haystack = f"{source.get('title', '')} {source['url']}".lower()
+                hall_score = sum(token in haystack for token in hall_tokens)
+                relevance = sum(term in haystack for term in ("housing", "residence", "dorm", "room", "floor", "furniture"))
+                if not academic and hall_score == 0:
+                    continue
+                scored.append((10 * int(academic) + 3 * hall_score + relevance, source))
+            except (KeyError, ValueError):
+                continue
+        discovered_sources = [source for _, source in sorted(scored, key=lambda item: item[0], reverse=True)[:3]]
+        requested_urls = [source["url"] for source in discovered_sources]
+
+    pages: list[dict[str, str]] = []
+    failures: list[dict[str, str]] = []
+    for raw_url in requested_urls:
+        try:
+            page = await fetch_dorm_page(raw_url, browser_fallback=settings.dorm_browser_fallback_enabled)
+            store.put_web_page(page.source_url, page.raw_hash, page.raw_html, page.cleaned_text, page.fetch_method)
+            pages.append({
+                "source_url": page.source_url,
+                "raw_hash": page.raw_hash,
+                "fetched_at": page.fetched_at,
+                "fetch_method": page.fetch_method,
+                "cleaned_text": page.cleaned_text,
+            })
+        except Exception as exc:
+            failures.append({"source_url": raw_url, "error": str(exc)[:240]})
+    if not pages:
+        return {
+            "schema_version": "1.0", "processing_status": "partial", "status": "partial",
+            "college": request.college, "residence_hall": request.residence_hall, "room_type": None,
+            "room_width_m": None, "room_length_m": None, "room_height_m": None, "room_confidence": 0,
+            "room_evidence": [], "items": [], "uncertainties": ["No useful official housing page could be fetched automatically."],
+            "sources": [], "discovered_sources": discovered_sources, "failures": failures, "needs_manual_sources": True,
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+            "message": "Automatic search did not produce readable dimension sources. Add one or more official housing links.",
+        }
+
+    cache_mode = settings.openai_model if openai.enabled else "manual"
+    page_signature = json.dumps([(page["source_url"], page["raw_hash"]) for page in pages], sort_keys=True)
+    cache_key = store.cache_key("dorm-research", DORM_PROMPT_VERSION, [cache_mode, request.college, request.residence_hall or "", request.room_type or "", page_signature])
+    if cached := store.get_cached(cache_key):
+        cached["status"] = "cached"
+        cached["failures"] = failures
+        cached["discovered_sources"] = discovered_sources
+        return cached
+    if not openai.enabled:
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is required for dorm dimension extraction.")
+
+    keywords = ("dimension", "width", "length", "height", "desk", "bed", "dresser", "wardrobe", "furniture", "room", "mattress", "floor plan")
+    evidence_blocks: list[str] = []
+    for page in pages:
+        chunks = section_chunks(page["cleaned_text"])
+        ranked = sorted(chunks, key=lambda chunk: sum(chunk.lower().count(keyword) for keyword in keywords), reverse=True)
+        selected = ranked[:3] or chunks[:1]
+        evidence_blocks.append(f"SOURCE URL: {page['source_url']}\n" + "\n\n".join(selected))
+    evidence = "\n\n--- NEXT SOURCE ---\n\n".join(evidence_blocks)[:32_000]
+    prompt = (
+        "Extract dorm-room and included-furniture dimensions only when explicitly supported by the supplied university housing pages. "
+        "Convert labeled measurements to meters. Never estimate a missing dimension, never treat a generic university standard as specific to a named hall, and use null when evidence is absent or ambiguous. "
+        "Every non-null dimension must have short evidence containing the exact source URL and a concise quote from that source. "
+        "A dimension order such as 36 x 80 inches must only be mapped to width/depth/height when the page labels or context makes the axes clear. "
+        "Mark furniture included_with_room only when the page says it is provided. Preserve uncertainty about room types and building variations. "
+        "When a room type was requested, do not mix dimensions from single, double, triple, suite, or apartment designs; return null rather than using a different design."
+    )
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            result, usage = await openai.structured_response(
+                project_id=request.project_id,
+                operation=f"dorm-research-{attempt + 1}",
+                system_prompt=prompt + (" The prior extraction failed schema validation; return a corrected schema-conformant result." if attempt else ""),
+                user_text=f"College: {request.college}\nResidence hall: {request.residence_hall or 'not specified'}\nRequested room type: {request.room_type or 'not specified'}\n\n{evidence}",
+                result_type=DormResearchAIResult,
+                max_output_tokens=1800,
+            )
+            response = {
+                **result.model_dump(),
+                "status": result.processing_status,
+                "sources": [{key: page[key] for key in ("source_url", "raw_hash", "fetched_at", "fetch_method")} for page in pages],
+                "failures": failures,
+                "discovered_sources": discovered_sources,
+                "needs_manual_sources": not any((result.room_width_m, result.room_length_m, result.room_height_m)) and not any(any((item.width_m, item.depth_m, item.height_m)) for item in result.items),
+                "usage": usage,
+                "message": "Review and confirm every extracted measurement before using it for fit decisions.",
+            }
+            if response["needs_manual_sources"]:
+                response["message"] = "The automatic search found pages, but no useful dimensions. Add an official housing or furniture link."
+            store.put_cached(cache_key, "dorm-research", response)
+            return response
+        except SpendGuardError:
+            raise
+        except Exception as exc:
+            last_error = exc
+    raise HTTPException(status_code=502, detail=f"Dorm pages were fetched, but structured extraction failed: {type(last_error).__name__}")
 
 
 @app.post("/api/v1/extract-product/url")
@@ -608,6 +599,47 @@ async def generate_product_visual(request: ProductVisualRequest) -> dict[str, An
         return {"status": "manual_fallback", "message": "AI styling was unavailable; a deterministic model was selected.", **fallback.model_dump()}
 
 
+@app.post("/api/v1/recommend-layout")
+async def recommend_layout(request: RecommendLayoutRequest) -> dict[str, Any]:
+    """Lets AI choose among layouts that have already passed deterministic collision checks."""
+    fallback = request.candidates[0]
+    fallback_response = {
+        "schema_version": "1.0",
+        "processing_status": "partial",
+        "candidate_id": fallback.candidate_id,
+        "rationale": "Selected the balanced collision-tested layout. Review it and lock anything that should not move.",
+    }
+    if len(request.candidates) == 1 or not openai.enabled:
+        return {"status": "manual_fallback", **fallback_response, "usage": {"input_tokens": 0, "output_tokens": 0}}
+    cache_key = store.cache_key("layout-recommendation", PROMPT_VERSION, [settings.openai_model, request.model_dump_json()])
+    if cached := store.get_cached(cache_key):
+        cached["status"] = "cached"
+        return cached
+    try:
+        result, usage = await openai.structured_response(
+            project_id=request.project_id,
+            operation="layout-recommendation",
+            system_prompt=(
+                "Choose exactly one of the supplied whole-room furniture layouts. Every candidate has already passed code-based wall, collision, ceiling, and clearance checks; do not recalculate or alter coordinates. "
+                "Prefer a practical dorm arrangement: preserve a clear center and entry path, keep large storage on perimeter walls, put desks near windows when possible, and keep chairs, lamps, hampers, and ottomans near the furniture they support. "
+                "Use the room type and user priorities as tie-breakers. Return only a supplied candidate_id and a concise rationale; never invent another layout."
+            ),
+            user_text=request.model_dump_json(),
+            result_type=LayoutRecommendationAIResult,
+            max_output_tokens=260,
+        )
+        valid_ids = {candidate.candidate_id for candidate in request.candidates}
+        if result.candidate_id not in valid_ids:
+            raise ValueError("Layout recommendation referenced an unknown candidate")
+        response = {"status": result.processing_status, **result.model_dump(), "usage": usage}
+        store.put_cached(cache_key, "layout-recommendation", response)
+        return response
+    except SpendGuardError:
+        raise
+    except Exception:
+        return {"status": "manual_fallback", **fallback_response, "usage": {"input_tokens": 0, "output_tokens": 0}}
+
+
 @app.post("/api/v1/explain-proposal")
 async def explain_proposal(request: ExplainProposalRequest) -> dict[str, Any]:
     cache_mode = settings.openai_model if openai.enabled else "manual"
@@ -644,105 +676,3 @@ async def explain_proposal(request: ExplainProposalRequest) -> dict[str, Any]:
         raise
     except Exception:
         return {"status": "manual_fallback", **fallback.model_dump()}
-
-
-def _settlement_transfers(request: SettlementPreviewRequest) -> list[dict[str, Any]]:
-    """Equal split with exact-cent conservation; no AI participates in payment math."""
-    people = request.people
-    total = sum(expense.amount_cents for expense in request.expenses)
-    base, remainder = divmod(total, len(people))
-    paid = {person.id: 0 for person in people}
-    for expense in request.expenses:
-        paid[expense.paid_by_person_id] += expense.amount_cents
-    balances = []
-    for index, person in enumerate(people):
-        fair_share = base + (1 if index < remainder else 0)
-        balances.append({"person": person, "balance": paid[person.id] - fair_share, "paid": paid[person.id], "share": fair_share})
-    debtors = [{**entry, "remaining": -entry["balance"]} for entry in balances if entry["balance"] < 0]
-    creditors = [{**entry, "remaining": entry["balance"]} for entry in balances if entry["balance"] > 0]
-    transfers: list[dict[str, Any]] = []
-    creditor_index = 0
-    for debtor in debtors:
-        while debtor["remaining"] and creditor_index < len(creditors):
-            creditor = creditors[creditor_index]
-            amount = min(debtor["remaining"], creditor["remaining"])
-            transfers.append({
-                "id": f"transfer-{len(transfers) + 1}",
-                "debtor_id": debtor["person"].id,
-                "debtor_name": debtor["person"].name,
-                "creditor_id": creditor["person"].id,
-                "creditor_name": creditor["person"].name,
-                "amount_cents": amount,
-                "description": f"equal share of {len(request.expenses)} confirmed room purchase{'s' if len(request.expenses) != 1 else ''}",
-            })
-            debtor["remaining"] -= amount
-            creditor["remaining"] -= amount
-            if creditor["remaining"] == 0:
-                creditor_index += 1
-    return transfers
-
-
-@app.get("/api/v1/visa/request-to-pay/status")
-async def visa_request_to_pay_status() -> dict[str, Any]:
-    return visa_r2p.public_status()
-
-
-@app.post("/api/v1/settlements/preview")
-async def preview_settlement(request: SettlementPreviewRequest) -> dict[str, Any]:
-    transfers = _settlement_transfers(request)
-    batch = settlement_store.create_batch(
-        project_id=request.project_id,
-        currency=request.currency,
-        people=[person.model_dump() for person in request.people],
-        expenses=[expense.model_dump() for expense in request.expenses],
-        transfers=transfers,
-    )
-    return {**batch, "visa": visa_r2p.public_status(), "calculation": "equal_split_exact_cents"}
-
-
-@app.post("/api/v1/settlements/{settlement_id}/requests")
-async def create_payment_request(settlement_id: str, request: CreatePaymentRequest) -> dict[str, Any]:
-    batch, transfer = settlement_store.transfer(settlement_id, request.transfer_id)
-    people = {person["id"]: person for person in batch["people"]}
-    creditor = people[transfer["creditor_id"]]
-    debtor = people[transfer["debtor_id"]]
-    result = await visa_r2p.initiate(
-        transfer=transfer,
-        creditor=creditor,
-        debtor=debtor,
-        creditor_alias=request.creditor_alias,
-        debtor_alias=request.debtor_alias,
-        alias_type=request.alias_type,
-    )
-    saved = settlement_store.put_request(
-        batch_id=settlement_id,
-        transfer_id=request.transfer_id,
-        provider=visa_r2p.mode,
-        provider_request_id=result["provider_request_id"],
-        affinity=result.get("affinity"),
-        status=result["status"],
-        creditor_alias=request.creditor_alias,
-        debtor_alias=request.debtor_alias,
-        response=result["raw"],
-    )
-    return {**saved, "amount_cents": transfer["amount_cents"], "debtor_name": debtor["name"], "creditor_name": creditor["name"], "sandbox_notice": visa_r2p.mode == "demo"}
-
-
-@app.get("/api/v1/payment-requests/{request_id}")
-async def get_payment_request(request_id: str, refresh: bool = True) -> dict[str, Any]:
-    saved, details = settlement_store.request_details(request_id)
-    if refresh and saved["provider"] == "sandbox" and saved["provider_request_id"] and saved["status"] in {"pending", "accepted"}:
-        result = await visa_r2p.retrieve(saved["provider_request_id"], details["affinity"])
-        saved = settlement_store.update_request(request_id, result["status"], result["raw"])
-    return saved
-
-
-@app.post("/api/v1/payment-requests/{request_id}/demo-decision")
-async def decide_demo_payment_request(request_id: str, decision: DemoPaymentDecision) -> dict[str, Any]:
-    saved = settlement_store.get_request(request_id)
-    if saved["provider"] != "demo":
-        raise SettlementError("Demo decisions cannot change a Visa sandbox request.")
-    if saved["status"] not in {"pending", "accepted"}:
-        raise SettlementError("This payment request is already final.")
-    status = "completed" if decision.decision == "accept" else "rejected"
-    return settlement_store.update_request(request_id, status, {"demo": True, "decision": decision.decision})

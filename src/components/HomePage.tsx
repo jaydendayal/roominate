@@ -206,7 +206,7 @@ export function HomePage({ projects, current, onChooseCurrent, onOpen, onCreate,
           <button className="new-project-card" onClick={onCreate}>
             <Plus size={20} />
             <strong>Start a new room</strong>
-            <small>Photos, video, or measurements</small>
+            <small>Dorm research, floor plan, or measurements</small>
           </button>
         </div>
       </section>

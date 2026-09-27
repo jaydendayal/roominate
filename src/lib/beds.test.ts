@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addRoomBed, BED_SIZES, bedProduct, bedProductId, ensureProvidedBed, isRoomBedItem, removeRoomBed, ROOM_BED_ITEM_ID, roomBeds, setRoomBedSize } from "./beds";
+import { addRoomBed, BED_SIZES, bedProduct, bedProductId, ensureProvidedBed, isRoomBedItem, MAX_BED_LOFT_METERS, removeRoomBed, ROOM_BED_ITEM_ID, roomBeds, setRoomBedSize } from "./beds";
 import { calculateIssues, purchaseSubtotal } from "./calculations";
 import { createBlankProject, createDemoProject } from "./demo";
 import { colorGroupsFor, describeColor } from "./productColors";
@@ -11,6 +11,10 @@ const HEX = /^#[0-9a-f]{6}$/i;
 const bedOf = (project: Project) => project.items.find(isRoomBedItem);
 
 describe("room bed sizes", () => {
+  it("caps the supported loft height at exactly 60 inches", () => {
+    expect(MAX_BED_LOFT_METERS).toBeCloseTo(1.524, 6);
+  });
+
   it("uses standard mattress sizes plus a frame", () => {
     const twinXl = bedProduct("twin_xl");
     expect(twinXl.dimensions.width).toBeCloseTo(40 * 0.0254, 3);

@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, ChevronRight, Eye, Grid3X3, Lock, Maximize2, Move3D, PackagePlus, Redo2, RotateCw, ScanLine, ShoppingCart, Undo2, Unlock } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, BedDouble, Box, ChevronRight, Eye, Grid3X3, LoaderCircle, Lock, Maximize2, Move3D, PackagePlus, Redo2, RotateCw, ScanLine, ShoppingCart, Sparkles, Undo2, Unlock } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
+import { MAX_BED_LOFT_METERS } from "@/lib/beds";
 import { cents, productFor, purchaseSubtotal, settledElevation } from "@/lib/calculations";
 import { applyItemPatch, nextEdit, recordEdit, redoEdit, undoEdit, type ItemEdit, type ItemHistory, type ItemPatch } from "@/lib/itemHistory";
 import { arrowAxis, isArrowKey, verticalKey } from "@/lib/keyboardMoves";
-import { snapItemPosition } from "@/lib/snap";
+import { layoutResultMessage, recommendLayout } from "@/lib/layoutRecommendation";
+import { snapItemPlacement } from "@/lib/snap";
 import type { Issue, Item, Project, Vec2 } from "@/lib/types";
 import { ColorChoicePicker } from "../ColorChoicePicker";
 import { LengthInput } from "../LengthInput";
@@ -34,6 +36,8 @@ export function StudioPanel({
   const [cutaway, setCutaway] = useState(true);
   const [viewCommand, setViewCommand] = useState<{ type: "reset" | "overhead"; nonce: number }>({ type: "reset", nonce: 0 });
   const [isMac, setIsMac] = useState(false);
+  const [layoutMessage, setLayoutMessage] = useState("");
+  const [optimizing, setOptimizing] = useState(false);
   const selected = project.items.find((item) => item.id === selectedId);
   const selectedProduct = selected ? productFor(project, selected) : null;
   const selectedIssues = issues.filter((issue) => selectedId && issue.affectedItemIds.includes(selectedId));
@@ -86,7 +90,7 @@ export function StudioPanel({
     const rotationZ = (selected.transform?.rotationZ ?? 0) + Math.PI / 2;
     const center = selected.transform?.position ?? { x: project.room.width / 2, y: project.room.length / 2 };
     // Rotating swaps width and depth, so re-align edges when snapping is on.
-    const position = units.snapToGrid ? snapItemPosition(project, selected.id, center, units.gridSize, rotationZ) : center;
+    const position = snapItemPlacement(project, selected.id, center, { grid: units.snapToGrid, furniture: units.snapToFurniture, cell: units.gridSize, rotationZ });
     changeItem(selected.id, { transform: { ...selected.transform, position, rotationZ } });
   };
 
@@ -108,14 +112,42 @@ export function StudioPanel({
   const setSelectedElevation = (meters: number | null) => {
     if (!selected || selected.locked || meters == null) return;
     const transform = selected.transform ?? { position: { x: project.room.width / 2, y: project.room.length / 2 }, rotationZ: 0 };
-    changeItem(selected.id, { transform: { ...transform, elevation: meters } }, true);
+    const elevation = selectedProduct?.category.toLowerCase() === "bed"
+      ? Math.max(0, Math.min(MAX_BED_LOFT_METERS, meters))
+      : meters;
+    changeItem(selected.id, { transform: { ...transform, elevation } }, true);
+  };
+
+  const generateOptimalLayout = async () => {
+    setOptimizing(true);
+    setLayoutMessage("");
+    try {
+      const recommendation = await recommendLayout(project);
+      if (!recommendation) {
+        setLayoutMessage("No movable items have complete dimensions. Add dimensions or unlock an item before generating a layout.");
+        return;
+      }
+      update((current) => ({
+        ...recommendation.result.project,
+        cartVersion: current.cartVersion + 1,
+        proposal: current.proposal ? { ...current.proposal, stale: true } : null,
+      }));
+      setViewCommand({ type: "reset", nonce: Date.now() });
+      setLayoutMessage(layoutResultMessage(recommendation));
+    } catch (error) {
+      console.error("Could not generate an optimal layout", error);
+      setLayoutMessage("Roominate could not generate a layout from this room data. Check the room and item dimensions, then try again.");
+    } finally {
+      setOptimizing(false);
+    }
   };
 
   // Raises or lowers the selected item by one step; it stops at the floor.
   const liftSelected = (direction: -1 | 1) => {
     if (!selected?.transform || selected.locked) return;
     const current = selected.transform.elevation ?? 0;
-    const elevation = Math.max(0, Number((current + direction * units.moveStep).toFixed(4)));
+    const raised = Math.max(0, Number((current + direction * units.moveStep).toFixed(4)));
+    const elevation = selectedProduct?.category.toLowerCase() === "bed" ? Math.min(MAX_BED_LOFT_METERS, raised) : raised;
     if (elevation !== current) changeItem(selected.id, { transform: { ...selected.transform, elevation } });
   };
 
@@ -219,11 +251,13 @@ export function StudioPanel({
                 title={redoTarget ? `Redo ${describe(redoTarget)} (${shortcut(true)})` : "Nothing to redo"}
               ><Redo2 size={16} /><span>Redo</span></button>
             </div>
+            <button className="viewport-button optimize" disabled={optimizing} onClick={() => void generateOptimalLayout()}>{optimizing ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}<span>{optimizing ? "Optimizing…" : "Generate optimal layout"}</span></button>
             <button className={`viewport-button ${cutaway ? "active" : ""}`} onClick={() => setCutaway((current) => !current)}><Eye size={16} /><span>Cutaway</span></button>
             <button className="viewport-button" onClick={() => setViewCommand({ type: "overhead", nonce: Date.now() })}><Grid3X3 size={16} /><span>Overhead</span></button>
             <button className="viewport-button" onClick={() => setViewCommand({ type: "reset", nonce: Date.now() })}><Maximize2 size={16} /><span>Reset</span></button>
           </div>
         </div>
+        {layoutMessage && <div className="layout-result-banner"><Sparkles size={15} /><span>{layoutMessage}</span><button type="button" aria-label="Dismiss layout result" onClick={() => setLayoutMessage("")}>×</button></div>}
         <RoomCanvas
           project={project}
           issues={issues}
@@ -267,8 +301,9 @@ export function StudioPanel({
             <div className="coordinate-grid">
               <label>X ({units.roomUnit})<LengthInput disabled={selected.locked} step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.x ?? 0} onChange={(meters) => moveSelectedAxis("x", meters)} /></label>
               <label>Y ({units.roomUnit})<LengthInput disabled={selected.locked} step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.position.y ?? 0} onChange={(meters) => moveSelectedAxis("y", meters)} /></label>
-              <label>Z ({units.roomUnit})<LengthInput disabled={selected.locked} step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.elevation ?? 0} onChange={setSelectedElevation} /></label>
+              <label>{selectedProduct.category.toLowerCase() === "bed" ? "Loft" : "Z"} ({units.roomUnit})<LengthInput disabled={selected.locked} min={selectedProduct.category.toLowerCase() === "bed" ? 0 : undefined} max={selectedProduct.category.toLowerCase() === "bed" ? (units.roomUnit === "ft" ? 5 : MAX_BED_LOFT_METERS) : undefined} step={coordinateStep} unit={units.roomUnit} meters={selected.transform?.elevation ?? 0} onChange={setSelectedElevation} /></label>
             </div>
+            {selectedProduct.category.toLowerCase() === "bed" && <div className="info-note"><BedDouble size={16} /> Loft beds up to 60 inches. Existing posts extend to the floor, and furniture can stay underneath without snapping onto the mattress.</div>}
             <div className="nudge-row" role="group" aria-label={`Move by ${stepLabel}`}>
               <span>Move {stepLabel}</span>
               {/* Icons match the default view, where +Y (north) runs up the screen, like the ↑ key. */}

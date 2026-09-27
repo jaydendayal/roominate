@@ -16,6 +16,8 @@ interface ModelProps {
   opacity?: number;
   profile?: FurnitureVisualProfile;
   emphasized?: boolean;
+  /** Extends existing bed posts downward while the frame is raised. */
+  legExtension?: number;
   /** World-space clipping applied to every part (e.g. to split off the portion outside the room). */
   clipping?: ModelClipping;
 }
@@ -196,16 +198,17 @@ const bounded = (value: number, min: number, max: number) => Math.max(min, Math.
 const radians = (degrees: number) => bounded(degrees, -180, 180) * Math.PI / 180;
 const safeColor = (value: string | null | undefined, fallback: string) => value && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
 
-function ParametricPart({ part, dimensions, color, opacity, usePartColor }: { part: FurnitureVisualPart; dimensions: { width: number; depth: number; height: number }; color: string; opacity: number; usePartColor: boolean }) {
+function ParametricPart({ part, dimensions, color, opacity, usePartColor, legExtension }: { part: FurnitureVisualPart; dimensions: { width: number; depth: number; height: number }; color: string; opacity: number; usePartColor: boolean; legExtension: number }) {
   const clip = useClip();
+  const extension = part.role === "leg" ? Math.max(0, legExtension) : 0;
   const size: Size = [
     dimensions.width * bounded(part.size.x, 0.02, 1),
-    dimensions.height * bounded(part.size.y, 0.02, 1),
+    dimensions.height * bounded(part.size.y, 0.02, 1) + extension,
     dimensions.depth * bounded(part.size.z, 0.02, 1),
   ];
   const position: Position = [
     dimensions.width * bounded(part.position.x, -0.5, 0.5),
-    dimensions.height * bounded(part.position.y, -0.5, 0.5),
+    dimensions.height * bounded(part.position.y, -0.5, 0.5) - extension / 2,
     dimensions.depth * bounded(part.position.z, -0.5, 0.5),
   ];
   const rotation: Position = [radians(part.rotation.x), radians(part.rotation.y), radians(part.rotation.z)];
@@ -229,11 +232,11 @@ function ParametricPart({ part, dimensions, color, opacity, usePartColor }: { pa
   </mesh>;
 }
 
-function ParametricFurniture({ parts, dimensions, color, opacity, usePartColors }: { parts: FurnitureVisualPart[]; dimensions: { width: number; depth: number; height: number }; color: string; opacity: number; usePartColors: boolean }) {
-  return <group>{parts.slice(0, 24).map((part, index) => <ParametricPart key={`${part.role}-${index}`} part={part} dimensions={dimensions} color={color} opacity={opacity} usePartColor={usePartColors} />)}</group>;
+function ParametricFurniture({ parts, dimensions, color, opacity, usePartColors, legExtension }: { parts: FurnitureVisualPart[]; dimensions: { width: number; depth: number; height: number }; color: string; opacity: number; usePartColors: boolean; legExtension: number }) {
+  return <group>{parts.slice(0, 24).map((part, index) => <ParametricPart key={`${part.role}-${index}`} part={part} dimensions={dimensions} color={color} opacity={opacity} usePartColor={usePartColors} legExtension={legExtension} />)}</group>;
 }
 
-export function FurnitureModel({ category, name, dimensions, color, opacity = 1, profile, emphasized = false, clipping }: ModelProps) {
+export function FurnitureModel({ category, name, dimensions, color, opacity = 1, profile, emphasized = false, legExtension = 0, clipping }: ModelProps) {
   const w = dimensions.width;
   const h = dimensions.height;
   const d = dimensions.depth;
@@ -248,7 +251,7 @@ export function FurnitureModel({ category, name, dimensions, color, opacity = 1,
   const props = { w, h, d, color: styledColor, opacity };
   const parametricParts = profile?.parts?.length && profile.parts.length >= 2 ? profile.parts : null;
   let model;
-  if (parametricParts) model = <ParametricFurniture parts={parametricParts} dimensions={dimensions} color={styledColor} opacity={opacity} usePartColors={!emphasized} />;
+  if (parametricParts) model = <ParametricFurniture parts={parametricParts} dimensions={dimensions} color={styledColor} opacity={opacity} usePartColors={!emphasized} legExtension={legExtension} />;
   else switch (kind) {
     case "chair": model = <Chair {...props} hasArms={profile?.hasArms} hasBack={profile?.hasBack} />; break;
     case "couch": model = <Couch {...props} hasArms={profile?.hasArms} hasBack={profile?.hasBack} />; break;
