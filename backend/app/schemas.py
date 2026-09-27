@@ -302,3 +302,42 @@ class AcceptInviteRequest(StrictModel):
 class UpdateInviteProjectRequest(StrictModel):
     project: dict[str, Any]
     expected_revision: int = Field(ge=1)
+
+
+class SettlementPerson(StrictModel):
+    id: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=60)
+
+
+class SettlementExpense(StrictModel):
+    item_id: str = Field(min_length=1, max_length=160)
+    label: str = Field(min_length=1, max_length=180)
+    paid_by_person_id: str = Field(min_length=1, max_length=120)
+    amount_cents: int = Field(ge=1, le=100_000_000)
+
+
+class SettlementPreviewRequest(StrictModel):
+    project_id: str = Field(min_length=1, max_length=120, pattern=r"^[a-zA-Z0-9_-]+$")
+    people: list[SettlementPerson] = Field(min_length=2, max_length=20)
+    expenses: list[SettlementExpense] = Field(min_length=1, max_length=200)
+    currency: Literal["USD"] = "USD"
+
+    @model_validator(mode="after")
+    def references_known_people(self) -> "SettlementPreviewRequest":
+        ids = [person.id for person in self.people]
+        if len(ids) != len(set(ids)):
+            raise ValueError("roommates must have unique IDs")
+        if any(expense.paid_by_person_id not in ids for expense in self.expenses):
+            raise ValueError("every expense payer must be a project roommate")
+        return self
+
+
+class CreatePaymentRequest(StrictModel):
+    transfer_id: str = Field(min_length=1, max_length=120)
+    creditor_alias: str = Field(min_length=4, max_length=35)
+    debtor_alias: str = Field(min_length=4, max_length=35)
+    alias_type: Literal["MOBL", "EMAIL"] = "MOBL"
+
+
+class DemoPaymentDecision(StrictModel):
+    decision: Literal["accept", "reject"]

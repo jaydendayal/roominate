@@ -139,6 +139,51 @@ test("shop items are placed into the 3D room when added", async ({ page }, testI
   })).toBe(true);
 });
 
+test("group cart creates and resolves a Visa Request to Pay", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific settlement flow");
+  await page.route("**/api/v1/visa/request-to-pay/status", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ provider: "visa_direct_request_to_pay", mode: "demo", configured: false, message: "Local demonstration; no money moves." }),
+  }));
+  await page.route("**/api/v1/settlements/preview", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      id: "settlement-e2e",
+      total_cents: 59500,
+      calculation: "equal_split_exact_cents",
+      visa: { provider: "visa_direct_request_to_pay", mode: "demo", configured: false, message: "Local demonstration; no money moves." },
+      transfers: [{ id: "transfer-e2e", debtor_id: "person-maya", debtor_name: "Maya", creditor_id: "person-jay", creditor_name: "Jay", amount_cents: 4250, description: "Maya reimburses Jay" }],
+    }),
+  }));
+  await page.route("**/api/v1/settlements/settlement-e2e/requests", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ id: "request-e2e", transfer_id: "transfer-e2e", provider: "demo", status: "pending", creditor_alias: "+1••••00", debtor_alias: "+1••••99", amount_cents: 4250 }),
+  }));
+  await page.route("**/api/v1/payment-requests/request-e2e/demo-decision", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ id: "request-e2e", transfer_id: "transfer-e2e", provider: "demo", status: "completed", creditor_alias: "+1••••00", debtor_alias: "+1••••99" }),
+  }));
+
+  await page.getByRole("button", { name: "Open room" }).first().click();
+  await page.getByRole("button", { name: "Products" }).first().click();
+  await page.getByRole("button", { name: "Group cart" }).first().click();
+  await page.getByRole("button", { name: "Settle expenses" }).click();
+  await expect(page.getByRole("heading", { name: "Settle shared room expenses." })).toBeVisible();
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Calculate reimbursements" }).click();
+  await expect(page.getByText("$42.50")).toBeVisible();
+  await page.getByLabel("Maya").fill("+15551110099");
+  await page.getByLabel("Jay").fill("+15551110000");
+  await page.getByRole("button", { name: "Request with Visa" }).click();
+  await expect(page.getByText("Local demonstration—no money moved")).toBeVisible();
+  await page.getByRole("button", { name: "Simulate accept" }).click();
+  await expect(page.getByText("completed", { exact: true })).toBeVisible();
+});
+
 test("room analysis turns detected structure into reviewable 3D features", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-specific room reconstruction flow");
   await page.route("**/api/v1/analyze-room", async (route) => route.fulfill({
