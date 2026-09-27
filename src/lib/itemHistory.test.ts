@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { setProvidedBed } from "./beds";
+import { removeRoomBed, ROOM_BED_ITEM_ID, setRoomBedSize } from "./beds";
 import { createDemoProject } from "./demo";
 import { applyItemPatch, COALESCE_MS, emptyHistory, HISTORY_LIMIT, nextEdit, recordEdit, redoEdit, undoEdit, type ItemHistory, type ItemPatch } from "./itemHistory";
 import type { Project } from "./types";
@@ -85,7 +85,7 @@ describe("3D Studio undo/redo", () => {
     let state = { project: createDemoProject(), history: emptyHistory };
     state = edit(state, "item-room-bed", { transform: { position: { x: 1.2, y: 2.52 }, rotationZ: Math.PI / 2 } }, 1000);
     // Changed outside the Studio afterwards: the bed size.
-    const resized = setProvidedBed(state.project, "full");
+    const resized = setRoomBedSize(state.project, ROOM_BED_ITEM_ID, "full");
     const undone = undoEdit(state.history, resized)!;
     expect(item(undone.project, "item-room-bed").productId).toBe("room-bed-full");
     expect(item(undone.project, "item-room-bed").transform!.position.x).toBe(1.09);
@@ -95,7 +95,7 @@ describe("3D Studio undo/redo", () => {
     let state = { project: createDemoProject(), history: emptyHistory };
     state = edit(state, "item-chair", moveChair(2.5), 1000);
     state = edit(state, "item-room-bed", { locked: true }, 5000);
-    const noBed = setProvidedBed(state.project, "none");
+    const noBed = removeRoomBed(state.project, ROOM_BED_ITEM_ID);
     expect(nextEdit(state.history, noBed, "undo")?.itemId).toBe("item-chair");
     const undone = undoEdit(state.history, noBed)!;
     expect(item(undone.project, "item-chair").transform!.position.x).toBe(2.9);
