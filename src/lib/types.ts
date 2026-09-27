@@ -104,9 +104,15 @@ export type BedSize = "twin" | "twin_xl" | "full" | "full_xl" | "queen" | "king"
 
 export interface Room {
   id: string;
+  /** Overall width (X) and length (Y): the bounding box of the floor when it has a traced outline. */
   width: number;
   length: number;
   height: number;
+  /**
+   * Floor outline traced from a plan, counter-clockwise, as fractions of `width` (x) and `length` (y),
+   * so editing either dimension stretches the shape. Omitted means a plain width × length rectangle.
+   */
+  outline?: Vec2[];
   /** Size of the bed that comes with the room ("none" if it has none). Omitted in rooms saved before this setting; they default to Twin XL. */
   providedBed?: BedSize | "none";
   dimensionEvidence: Record<"width" | "length" | "height", Evidence>;

@@ -50,6 +50,7 @@ class OpenAIService:
         result_type: type[T],
         images: list[tuple[bytes, str]] | None = None,
         max_output_tokens: int = 900,
+        image_detail: str | None = None,
     ) -> tuple[T, dict[str, int]]:
         if not self.settings.openai_api_key:
             raise OpenAIUnavailable("OPENAI_API_KEY is not configured.")
@@ -57,7 +58,7 @@ class OpenAIService:
         user_content: list[dict[str, Any]] = [{"type": "input_text", "text": user_text}]
         for data, mime_type in (images or [])[:3]:
             encoded = base64.b64encode(data).decode("ascii")
-            user_content.append({"type": "input_image", "image_url": f"data:{mime_type};base64,{encoded}", "detail": self.settings.image_detail})
+            user_content.append({"type": "input_image", "image_url": f"data:{mime_type};base64,{encoded}", "detail": image_detail or self.settings.image_detail})
         payload = {
             "model": self.settings.openai_model,
             "input": [

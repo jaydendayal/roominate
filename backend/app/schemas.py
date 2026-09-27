@@ -97,6 +97,38 @@ class RoomAIResult(StrictModel):
         return self
 
 
+class TracedWall(StrictModel):
+    label: str = Field(pattern=r"^[A-Z]{1,2}$")
+    start: NormalizedPoint
+    end: NormalizedPoint
+
+
+class FloorPlanDimension(StrictModel):
+    text: str = Field(min_length=1, max_length=40)
+    spans: Literal["wall", "overall_width", "overall_length", "other"]
+    wall_label: str | None = Field(max_length=2)
+    confidence: float = Field(ge=0, le=1)
+    evidence: str = Field(min_length=1, max_length=180)
+
+
+class FloorPlanOpening(StrictModel):
+    kind: Literal["door", "window", "closet", "radiator", "obstacle"]
+    label: str = Field(min_length=1, max_length=80)
+    wall_label: str | None = Field(max_length=2)
+    position: NormalizedPoint
+    width_ratio: float | None = Field(ge=0.02, le=1)
+    confidence: float = Field(ge=0, le=1)
+    evidence: str = Field(min_length=1, max_length=180)
+
+
+class FloorPlanAIResult(StrictModel):
+    schema_version: Literal["1.0"]
+    processing_status: Literal["complete", "partial"]
+    dimensions: list[FloorPlanDimension] = Field(max_length=16)
+    openings: list[FloorPlanOpening] = Field(max_length=12)
+    uncertainties: list[str] = Field(max_length=8)
+
+
 class ProductDimensions(StrictModel):
     width_m: float | None
     depth_m: float | None

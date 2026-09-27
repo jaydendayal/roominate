@@ -1,15 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BedDouble, Camera, Check, Crosshair, DoorOpen, ImagePlus, LoaderCircle, Palette, Plus, Ruler, ScanLine, Trash2, Upload, Video } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BedDouble, Camera, Check, Crosshair, DoorOpen, DraftingCompass, ImagePlus, LoaderCircle, Palette, Plus, Ruler, ScanLine, Trash2, Upload, Video } from "lucide-react";
 import { useUnitPreferences } from "@/hooks/useUnitPreferences";
 import { BED_SIZES, currentBedSize, DEFAULT_BED_SIZE, isRoomBedItem, setProvidedBed } from "@/lib/beds";
 import { calculateIssues, productFor } from "@/lib/calculations";
 import { apiFetch, normalizeImageUpload } from "@/lib/api";
+import { FEATURE_DEFAULTS, hasShapedOutline, pointOnWall, roomArea, roomPolygon } from "@/lib/roomShape";
 import type { BedSize, EvidenceSource, MediaAsset, PaletteSwatch, Project, RoomFeature } from "@/lib/types";
 import { ColorChoicePicker } from "../ColorChoicePicker";
 import { LengthInput } from "../LengthInput";
 import { RoomCanvas } from "../RoomCanvas";
+import { FloorPlanScan, type FloorPlanResult } from "./FloorPlanScan";
 import { GuidedRoomScan } from "./GuidedRoomScan";
 
 const sourceLabels: Record<EvidenceSource, string> = {
@@ -52,14 +54,6 @@ interface RoomAnalysisResponse {
   message?: string;
 }
 
-const FEATURE_DEFAULTS: Record<RoomFeature["kind"], { width: number; depth: number; height: number; elevation: number }> = {
-  door: { width: 0.9, depth: 0.08, height: 2.03, elevation: 0 },
-  window: { width: 1.2, depth: 0.08, height: 1.05, elevation: 0.9 },
-  closet: { width: 1.1, depth: 0.58, height: 2.05, elevation: 0 },
-  radiator: { width: 0.85, depth: 0.18, height: 0.62, elevation: 0.12 },
-  obstacle: { width: 0.5, depth: 0.5, height: 0.8, elevation: 0 },
-};
-
 function analysisFeatures(result: RoomAnalysisResponse, project: Project): RoomFeature[] {
   const fallbackWalls = ["south", "north", "west", "east"] as const;
   return result.room.features.map((feature, index) => {
@@ -71,11 +65,7 @@ function analysisFeatures(result: RoomAnalysisResponse, project: Project): RoomF
     const height = feature.height_m ?? defaults.height;
     const suggestedRatio = Number.isFinite(feature.offset_ratio) ? feature.offset_ratio! : (index + 1) / (result.room.features.length + 1);
     const ratio = Math.max(0.05, Math.min(0.95, suggestedRatio));
-    let position = { x: project.room.width * ratio, y: project.room.length / 2 };
-    if (wall === "south") position = { x: project.room.width * ratio, y: depth / 2 };
-    if (wall === "north") position = { x: project.room.width * ratio, y: project.room.length - depth / 2 };
-    if (wall === "west") position = { x: depth / 2, y: project.room.length * ratio };
-    if (wall === "east") position = { x: project.room.width - depth / 2, y: project.room.length * ratio };
+    const position = wall === "interior" ? { x: project.room.width * ratio, y: project.room.length / 2 } : pointOnWall(project.room, wall, ratio, depth / 2);
     return {
       id: `ai-feature-${crypto.randomUUID()}`,
       name: feature.label,
@@ -119,8 +109,12 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
   const [analysisMessage, setAnalysisMessage] = useState("");
   const [analysisResult, setAnalysisResult] = useState<RoomAnalysisResponse | null>(null);
   const [guidedScanOpen, setGuidedScanOpen] = useState(false);
+  const [planScanOpen, setPlanScanOpen] = useState(false);
+  const [keepProportions, setKeepProportions] = useState(true);
   const issues = calculateIssues(project);
   const units = useUnitPreferences();
+  const shaped = hasShapedOutline(project.room);
+  const scaleConfirmed = project.room.dimensionEvidence.width.confirmedByUser || project.room.dimensionEvidence.length.confirmedByUser;
   const guidedAssets = project.room.mediaAssets.filter((asset) => asset.name.startsWith("guided-"));
   const analysisAssets = guidedAssets.length >= 5 ? [guidedAssets[0], guidedAssets[2], guidedAssets[4]] : project.room.mediaAssets.slice(0, 3);
   const bedSize = currentBedSize(project);
@@ -136,11 +130,15 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
 
   const changeDimension = (key: "width" | "length" | "height", value: number | null) => {
     if (value == null || !Number.isFinite(value) || value <= 0) return;
-    update((current) => ({
-      ...current,
-      room: { ...current.room, [key]: value, geometryVersion: current.room.geometryVersion + 1 },
-      proposal: current.proposal ? { ...current.proposal, stale: true } : null,
-    }));
+    update((current) => {
+      const room = { ...current.room, [key]: value, geometryVersion: current.room.geometryVersion + 1 };
+      // A traced shape scales as a whole from one measured side, unless the user wants to stretch it.
+      if (key !== "height" && keepProportions && hasShapedOutline(current.room)) {
+        const other = key === "width" ? "length" : "width";
+        room[other] = Math.round(current.room[other] * (value / current.room[key]) * 1000) / 1000;
+      }
+      return { ...current, room, proposal: current.proposal ? { ...current.proposal, stale: true } : null };
+    });
   };
 
   const changeEvidence = (key: "width" | "length" | "height", source: EvidenceSource) => update((current) => ({
@@ -205,6 +203,38 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
     }
   };
 
+  const applyFloorPlan = (result: FloorPlanResult) => {
+    update((current) => {
+      const evidence = {
+        source: result.measured ? "imported_plan" as const : "media_estimate" as const,
+        confidence: result.measured ? 0.95 : 0.3,
+        confirmedByUser: result.measured,
+        note: result.note,
+      };
+      // Doors and windows read from an earlier plan are replaced unless they were confirmed.
+      const retained = current.room.features.filter((feature) => feature.source !== "imported_plan" || feature.confirmed);
+      return {
+        ...current,
+        room: {
+          ...current.room,
+          width: result.width,
+          length: result.length,
+          outline: result.outline,
+          dimensionEvidence: { ...current.room.dimensionEvidence, width: evidence, length: evidence },
+          features: [...retained, ...result.features],
+          reconstructionStatus: result.measured ? "reviewed" : "estimated",
+          geometryVersion: current.room.geometryVersion + 1,
+        },
+        proposal: current.proposal ? { ...current.proposal, stale: true } : null,
+      };
+    });
+    setPlanScanOpen(false);
+    setAnalysisState("done");
+    setAnalysisMessage(result.measured
+      ? "Floor plan shape applied at the measured scale. Review any doors or windows it added."
+      : "Floor plan shape applied at an estimated size. Enter a measured width or length below; the shape keeps its proportions.");
+  };
+
   const applyEstimate = (dimension: "width" | "length" | "height", meters: number) => update((current) => ({
     ...current,
     room: {
@@ -265,18 +295,27 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
         </section>
 
         <section className="panel-surface form-card">
-          <div className="step-heading"><span>2</span><div><h2>Confirm dimensions</h2><p>Enter measurements in your preferred units. These measurements override media estimates.</p></div></div>
+          <div className="step-heading"><span>2</span><div><h2>Confirm dimensions</h2><p>Enter measurements in your preferred units, or trace the room&rsquo;s shape from a floor plan. These measurements override media estimates.</p></div></div>
+          <button className="guided-scan-button plan-scan-button" onClick={() => setPlanScanOpen(true)}><span className="upload-icon"><DraftingCompass size={22} /></span><span><strong>{shaped ? "Rescan the floor plan" : "Scan a floor plan"}</strong><small>Trace the room&rsquo;s walls from a housing plan; one known wall sets the scale</small></span><ArrowRight size={17} /></button>
+          {shaped && <div className="shape-summary">
+            <svg viewBox={`0 0 ${project.room.width} ${project.room.length}`} aria-hidden="true"><polygon transform={`matrix(1 0 0 -1 0 ${project.room.length})`} points={roomPolygon(project.room).map((point) => `${point.x},${point.y}`).join(" ")} /></svg>
+            <span><strong>Traced shape</strong><small>{roomPolygon(project.room).length} walls · {units.unitSystem === "imperial" ? `${Math.round(roomArea(project.room) * 10.7639)} sq ft` : `${roomArea(project.room).toFixed(1)} m²`}</small></span>
+            <button className="text-button" onClick={() => updateRoom({ outline: undefined })}>Use a rectangle</button>
+            <label className="snap-toggle"><input type="checkbox" checked={keepProportions} onChange={(event) => setKeepProportions(event.target.checked)} /><span>Keep proportions when changing width or length</span></label>
+          </div>}
           <div className="dimension-fields">
             {(["width", "length", "height"] as const).map((key) => (
               <div className="dimension-field" key={key}>
-                <label><span>{key[0].toUpperCase() + key.slice(1)}</span><div className="unit-input"><LengthInput min={0} step={units.roomUnit === "ft" ? 0.25 : 0.01} unit={units.roomUnit} meters={project.room[key]} onChange={(meters) => changeDimension(key, meters)} /><b>{units.roomUnit}</b></div></label>
+                <label><span>{shaped && key !== "height" ? `Overall ${key}` : key[0].toUpperCase() + key.slice(1)}</span><div className="unit-input"><LengthInput min={0} step={units.roomUnit === "ft" ? 0.25 : 0.01} unit={units.roomUnit} meters={project.room[key]} onChange={(meters) => changeDimension(key, meters)} /><b>{units.roomUnit}</b></div></label>
                 <select value={project.room.dimensionEvidence[key].source} onChange={(event) => changeEvidence(key, event.target.value as EvidenceSource)} aria-label={`${key} evidence source`}>
                   {(["user_confirmed", "imported_plan", "scan", "media_estimate"] as EvidenceSource[]).map((source) => <option value={source} key={source}>{sourceLabels[source]}</option>)}
                 </select>
               </div>
             ))}
           </div>
-          <div className="evidence-note"><Ruler size={17} /><span><strong>Scale is anchored.</strong> The room has a valid floor and positive confirmed dimensions for placement.</span></div>
+          {scaleConfirmed
+            ? <div className="evidence-note"><Ruler size={17} /><span><strong>Scale is anchored.</strong> The room has a valid floor and positive confirmed dimensions for placement.</span></div>
+            : <div className="evidence-note unanchored"><AlertTriangle size={17} /><span><strong>Scale is an estimate.</strong> Measure the width or length and mark it confirmed before trusting what fits.</span></div>}
           <div className="subsection-title"><h3>Bed that comes with the room</h3></div>
           <div className="bed-setting">
             <label><span>Bed size</span>
@@ -296,7 +335,7 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
         </section>
 
         <section className="capture-preview viewport-card">
-          <div className="preview-heading"><div><p className="eyebrow">Live scaled preview</p><h2>{units.formatLength(project.room.width)} × {units.formatLength(project.room.length)} × {units.formatLength(project.room.height)}</h2><small>{project.room.features.length ? `${project.room.features.length} structural feature${project.room.features.length === 1 ? "" : "s"} modeled` : "Analyze room media to add visible doors, windows, and fixed features."}</small></div><span className="source-chip confirmed"><Check size={13} /> measured shell</span></div>
+          <div className="preview-heading"><div><p className="eyebrow">Live scaled preview</p><h2>{units.formatLength(project.room.width)} × {units.formatLength(project.room.length)} × {units.formatLength(project.room.height)}{shaped ? " · traced shape" : ""}</h2><small>{project.room.features.length ? `${project.room.features.length} structural feature${project.room.features.length === 1 ? "" : "s"} modeled` : "Analyze room media to add visible doors, windows, and fixed features."}</small></div>{scaleConfirmed ? <span className="source-chip confirmed"><Check size={13} /> measured shell</span> : <span className="source-chip uncertain"><AlertTriangle size={13} /> estimated shell</span>}</div>
           <div className="capture-canvas"><RoomCanvas project={project} issues={issues} cutaway compact viewCommand={{ type: "reset", nonce: project.room.geometryVersion }} /></div>
           <div className="palette-bar">
             <span><Palette size={16} /> Room palette</span>
@@ -305,6 +344,7 @@ export function CapturePanel({ project, update, onContinue }: { project: Project
           </div>
         </section>
       </div>
+      {planScanOpen && <FloorPlanScan room={project.room} projectId={project.id} onClose={() => setPlanScanOpen(false)} onApply={applyFloorPlan} />}
       {guidedScanOpen && <GuidedRoomScan onClose={() => setGuidedScanOpen(false)} onComplete={(assets, reference) => {
         update((current) => {
           const room = { ...current.room, mediaAssets: [...current.room.mediaAssets, ...assets], reconstructionStatus: "estimated" as const, geometryVersion: current.room.geometryVersion + 1 };
