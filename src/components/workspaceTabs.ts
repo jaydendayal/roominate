@@ -1,4 +1,4 @@
-import { BedDouble, Camera, DoorOpen, Grid2x2, Package, Pin, ShoppingBag, StickyNote, type LucideIcon } from "lucide-react";
+import { BedDouble, DoorOpen, Grid2x2, Package, Pin, Ruler, ShoppingBag, StickyNote, type LucideIcon } from "lucide-react";
 
 export type Screen = "capture" | "studio" | "products" | "constraints" | "issues" | "better";
 
@@ -14,7 +14,7 @@ export interface WorkspaceTab {
 }
 
 export const workspaceTabs: WorkspaceTab[] = [
-  { id: "capture", index: "01", label: "Room capture", object: "Camera", summary: "Photos, guided scan, and confirmed measurements", icon: Camera },
+  { id: "capture", index: "01", label: "Room setup", object: "Tape measure", summary: "Dorm research, floor plans, and confirmed measurements", icon: Ruler },
   { id: "studio", index: "02", label: "3D Studio", object: "Window", summary: "Arrange furniture in the scaled room", icon: Grid2x2 },
   { id: "products", index: "03", label: "Products", object: "Boxes", summary: "Import, shop, and split the group cart", icon: Package },
   { id: "constraints", index: "04", label: "Constraints", object: "Corkboard", summary: "Budget, belongings, needs, and house rules", icon: Pin },

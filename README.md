@@ -9,7 +9,7 @@ The repository is a working vertical slice built from the supplied PRD:
 - FastAPI service for server-only OpenAI Responses API calls
 - deterministic collision, clearance, duplicate, rule, and budget checks
 - local development persistence with a resettable full-flow demo
-- browser-based guided room capture with six viewpoints, quality feedback, and a measured scale reference
+- official dorm research and optional floor-plan diagram import
 - floor plan scanning that traces a room's shape (including L-shapes and other non-rectangular rooms) from a plan image, scaled from any one measured or printed wall
 - dimension-scaled procedural 3D models for chairs, couches, desks, wardrobes, hampers, beanbags, ottomans, dressers, lamps, mirrors, and mini fridges
 - schema-constrained OpenAI visual profiles that turn product pictures or descriptions into bounded primitive parts, with safe procedural archetypes as a fallback
@@ -23,14 +23,15 @@ Room geometry uses a single right-handed convention throughout the domain model,
 
 ## Run locally
 
-Prerequisites: Node.js 20+, Python 3.12+, and optionally `ffmpeg` for server-side walkthrough-video frame sampling. The commands below are the same on macOS, Linux, and Windows (PowerShell or Command Prompt).
+Prerequisites: Node.js 20+ and Python 3.12+. The commands below are the same on macOS, Linux, and Windows (PowerShell or Command Prompt).
 
 ```bash
 npm install
 npm run backend:setup
+npx playwright install chromium
 ```
 
-`backend:setup` finds Python 3.12+ (`python3`/`python` on macOS and Linux, the `py` launcher or `python` on Windows), creates `.venv`, and installs `backend/requirements-dev.txt`. Re-run it after backend requirements change.
+`backend:setup` finds Python 3.12+ (`python3`/`python` on macOS and Linux, the `py` launcher or `python` on Windows), creates `.venv`, and installs `backend/requirements-dev.txt`. Re-run it after backend requirements change. Playwright Chromium is optional for most of Roominate, but enables the dorm researcher to read permitted JavaScript-rendered housing pages when static HTML is insufficient.
 
 Copy `.env.example` to `.env.local` (macOS/Linux: `cp .env.example .env.local`; Windows PowerShell: `Copy-Item .env.example .env.local`). Next.js reads it for the frontend, and the backend scripts load `.env` and `.env.local` for FastAPI; variables already set in your shell take precedence.
 
@@ -44,19 +45,19 @@ Or run them separately: `npm run backend:dev` (FastAPI on port 8000) and `npm ru
 
 Open [http://localhost:3000](http://localhost:3000), choose **Open room** on the seeded Maple Hall project, and use **Reset demo** whenever you want the deterministic starting state back.
 
-To invite a remote roommate, open a room and choose **Share**. Pick view or edit access, an expiry, and a collaborator limit, then send the generated link. The FastAPI service must be reachable from the roommate's device: deployed builds should set `NEXT_PUBLIC_API_URL` to the public HTTPS API origin and include the web origin in `ALLOWED_ORIGINS`. Invite links are bearer secrets. Room photos, videos, and imported screenshots are stripped before the shared snapshot is stored. Roommates explicitly **Refresh** before editing and **Publish changes** afterward; optimistic revisions reject stale publishes instead of silently overwriting someone else's work.
+To invite a remote roommate, open a room and choose **Share**. Pick view or edit access, an expiry, and a collaborator limit, then send the generated link. The FastAPI service must be reachable from the roommate's device: deployed builds should set `NEXT_PUBLIC_API_URL` to the public HTTPS API origin and include the web origin in `ALLOWED_ORIGINS`. Invite links are bearer secrets. Imported product screenshots are stripped before the shared snapshot is stored. Roommates explicitly **Refresh** before editing and **Publish changes** afterward; optimistic revisions reject stale publishes instead of silently overwriting someone else's work.
 
 The app remains useful without an OpenAI key: measurements, 3D editing, product manual entry, placement checks, issue detection, and Better Cart all continue to work. AI endpoints return explicit manual fallbacks instead of fabricated values.
 
-The guided scanner needs camera permission and a secure browser context (`localhost` works during development; deployed environments need HTTPS). It records overlapping still images rather than depth data. Roominate samples representative viewpoints for the guarded AI request, retains the complete scan locally when size permits, and requires users to review measurements before relying on fit results.
+**Scan a floor plan** (Room setup → Confirm dimensions) traces the room's outline from a screenshot or photo of a housing plan. The tracing runs entirely in the browser and uses no AI. It grows the room's fill colour from the spot you click, absorbs the small pockets that door swings, labels, and furniture outlines cut out of it, and closes doorways so a white room on a white page doesn't leak into the hall. It then straightens the edge into walls, correcting a plan photographed at a slight angle. The walls are lettered A, B, C… clockwise from the top-left. Enter the real length of any one wall and every other wall scales from it; measurements on both axes scale each axis separately. Without a measurement the shape keeps its proportions at the current floor area and is labelled an estimate. A plain rectangle is stored as width × length. Any other shape is stored in `Room.outline` as fractions of the overall width and length, and the fit checks, 3D walls, floor grid, and room thumbnails all follow it. Optionally, **Read printed dimensions** sends the plan and a copy with the lettered outline to `POST /api/v1/read-floor-plan`. The model only transcribes dimension labels and locates doors and windows. Code parses each printed label (such as `12'-6"` or `3.81 m`) into meters and drops anything that doesn't state a length. The user chooses which readings to use, and doors and windows are added unconfirmed.
 
-**Scan a floor plan** (Room capture → Confirm dimensions) traces the room's outline from a screenshot or photo of a housing plan. The tracing runs entirely in the browser and uses no AI. It grows the room's fill colour from the spot you click, absorbs the small pockets that door swings, labels, and furniture outlines cut out of it, and closes doorways so a white room on a white page doesn't leak into the hall. It then straightens the edge into walls, correcting a plan photographed at a slight angle. The walls are lettered A, B, C… clockwise from the top-left. Enter the real length of any one wall and every other wall scales from it; measurements on both axes scale each axis separately. Without a measurement the shape keeps its proportions at the current floor area and is labelled an estimate. A plain rectangle is stored as width × length. Any other shape is stored in `Room.outline` as fractions of the overall width and length, and the fit checks, 3D walls, floor grid, and room thumbnails all follow it. Optionally, **Read printed dimensions** sends the plan and a copy with the lettered outline to `POST /api/v1/read-floor-plan`. The model only transcribes dimension labels and locates doors and windows. Code parses each printed label (such as `12'-6"` or `3.81 m`) into meters and drops anything that doesn't state a length. The user chooses which readings to use, and doors and windows are added unconfirmed.
-
-Room and product-image uploads accept HEIC/HEIF in addition to JPEG, PNG, WebP, and GIF. Because browser and model support varies, HEIC/HEIF uploads are decoded server-side, orientation-corrected, bounded to 50 megapixels, resized to at most 2400 pixels per side, and returned as a non-cached JPEG for preview and analysis. Individual uploads remain capped at 8 MB.
-
-When OpenAI is configured, the same guarded analysis request returns schema-validated wall/floor/ceiling polygons, visible corner points, openings, three dimension assessments, confidence, evidence, and uncertainty notes. Coordinates are normalized and displayed over the analyzed frames. Confirmed measurements are enforced again in server code; visual estimates must be explicitly accepted and remain labeled unverified until the user confirms them.
+Floor-plan and product-image uploads accept HEIC/HEIF in addition to JPEG, PNG, WebP, and GIF. Because browser and model support varies, HEIC/HEIF uploads are decoded server-side, orientation-corrected, bounded to 50 megapixels, resized to at most 2400 pixels per side, and returned as a non-cached JPEG for preview and analysis. Individual uploads remain capped at 8 MB.
 
 Product URL and screenshot extraction also return a constrained 3D visual profile. If a user changes the product name, category, or variant, the confirmation form clears the stale profile and offers **Generate style**. This cached call may choose only renderer-supported archetypes, materials, silhouettes, and variants; it cannot emit geometry or executable code, and it never changes measured dimensions or collision bounds.
+
+Imported dorm furniture is automatically passed through the whole-room layout optimizer instead of being stacked at placeholder coordinates. The 3D Studio also provides **Generate optimal layout**: code creates multiple candidates using wall placement, open-center circulation, windows, doors, user priorities, functional furniture pairs, locked items, and the measured room shape. Every candidate must pass the deterministic wall, ceiling, overlap, and keep-clear checks. When OpenAI is configured, it chooses and explains one of those already-safe candidates; it cannot invent coordinates or bypass collision validation. Without OpenAI, the balanced validated candidate is used.
+
+The room-setup screen can also research a school and named residence hall. OpenAI web search first finds likely official university housing sources, Roominate selects and fetches up to three relevant pages, and the UI exposes every source as a link. If those pages do not contain useful room or furniture dimensions, the user can retry with up to five public links of their own or upload a screenshot/photo of a floor plan or room diagram. For diagrams, the browser traces the selected room in code and a server-side OpenAI vision request reads visible printed dimensions, doors, and windows from clean and annotated copies. The model is instructed not to estimate unlabeled lengths; the user chooses which recognized labels to use. The server checks public destinations and robots.txt, rate-limits by host, follows validated redirects, removes navigation/scripts, chunks content by headings, and sends only the most dimension-relevant sections to a strict OpenAI schema. JavaScript-only pages can use a guarded Playwright fallback. Searches, image readings, raw pages, cleaned text, structured results, source URLs, and fetch metadata are cached separately. Applied room and housing-furniture dimensions remain unconfirmed until the user reviews them.
 
 ## Environment variables
 
@@ -73,23 +74,15 @@ Copy `.env.example`. The main settings are:
 | `OPENAI_MAX_ESTIMATED_CALL_USD` | No | `0.08` | Amount reserved atomically before each request. |
 | `OPENAI_INPUT_COST_PER_1M` | No | `0.40` | Cost estimator input rate; update when changing model. |
 | `OPENAI_OUTPUT_COST_PER_1M` | No | `1.60` | Cost estimator output rate; update when changing model. |
+| `OPENAI_WEB_SEARCH_COST_USD` | No | `0.01` | Conservative local ledger estimate per hosted web-search call; update from current OpenAI pricing. |
 | `ROOMINATE_AI_DB` | No | `backend/data/ai_cache.sqlite` | SQLite cache and usage ledger path. |
+| `DORM_BROWSER_FALLBACK_ENABLED` | No | `true` | Allows the server to use installed Playwright Chromium when a permitted housing page exposes insufficient static HTML. |
 | `ALLOWED_ORIGINS` | No | localhost origins | Comma-separated CORS origins. |
 | `AMAZON_CREDENTIAL_ID` | No | unset | Amazon Creators API OAuth credential ID; server only. |
 | `AMAZON_CREDENTIAL_SECRET` | No | unset | Amazon Creators API OAuth secret; server only. |
 | `AMAZON_CREDENTIAL_VERSION` | No | `3.1` | Credential version used to select the regional OAuth endpoint. |
 | `AMAZON_PARTNER_TAG` | No | unset | Accepted Amazon Associates partner tag. |
 | `AMAZON_MARKETPLACE` | No | `www.amazon.com` | Marketplace sent to catalog search. |
-| `VISA_R2P_MODE` | No | `demo` | `demo` keeps all payment requests local; `sandbox` calls Visa. |
-| `VISA_R2P_USERNAME` / `VISA_R2P_PASSWORD` | Sandbox | unset | Visa Developer mutual-TLS credentials; server only. |
-| `VISA_R2P_CLIENT_CERT` / `VISA_R2P_CLIENT_KEY` | Sandbox | unset | Paths to the Visa project client certificate and its private key. |
-| `VISA_R2P_MLE_KEY_ID` | Sandbox | unset | Visa Message Level Encryption key ID. |
-| `VISA_R2P_MLE_SERVER_CERT` | Sandbox | unset | Path to Visa's MLE public certificate used to encrypt requests. |
-| `VISA_R2P_MLE_PRIVATE_KEY` | Sandbox | unset | Path to Roominate's MLE private key used to decrypt responses. |
-| `VISA_R2P_CREDITOR_AGENT_ID` / `VISA_R2P_DEBTOR_AGENT_ID` | Sandbox | unset | Agent IDs supplied during Visa Request to Pay onboarding. |
-| `VISA_R2P_SETTLEMENT_PAN` | Sandbox | unset | Visa-provided sandbox test PAN used as the `VISA_DIRECT` settlement option; never use a real card number. |
-| `VISA_R2P_SIMULATOR_SCENARIO` | No | `X_2_X_X` | Visa debtor simulator state sequence. `X_2_X_X` settles; `X_3_X_X` rejects. |
-| `VISA_R2P_COUNTRY` | No | `US` | Two-letter country used for the sandbox participants. |
 
 The default rate values were checked against the official [GPT-4.1 mini model page](https://developers.openai.com/api/docs/models/gpt-4.1-mini). If the model changes, update both cost variables before making calls.
 
@@ -99,13 +92,11 @@ The **Products → Shop** screen searches Amazon through the official Creators A
 
 At checkout, Roominate groups products by retailer and opens source listings for users to verify variants and add to each retailer's cart. It does not collect payment details, mutate a retailer cart, or submit an order. IKEA remains a browse-and-import workflow because its U.S. terms currently prohibit automated scraping and unauthorized deep-linking; a direct catalog integration should only be enabled after receiving IKEA permission or an approved partner feed.
 
-After retailer checkout, **Products → Group cart → Settle expenses** treats each assigned buyer as the person who paid, splits every confirmed priced purchase equally, and conserves exact cents in server code. It can create lifecycle-tracked Visa Direct Request to Pay messages. Default demo mode supports local accept/reject states without moving funds. Visa sandbox mode uses server-only mutual TLS and required JWE message-level encryption; it does not store raw card numbers and is not production payment approval.
-
 ## OpenAI boundary and spending safety
 
 The browser never receives `OPENAI_API_KEY`. FastAPI sends bounded requests to `/v1/responses` with strict JSON Schemas, validates responses with Pydantic, and then applies deterministic project rules. Model text cannot decide collision, clearance, subtotal, or confirmed policy outcomes.
 
-Results are cached by operation, content hash, prompt/schema version, model, and image-detail setting. A SQLite ledger atomically reserves estimated cost before a call, enforces the aggregate and per-project limits, records actual token usage, and bypasses spend for cache hits. Images are capped in size/count and use low detail by default (floor plan reading uses high detail, because dimension labels are small print); videos are sampled to at most three frames when `ffmpeg` is available.
+Results are cached by operation, content hash, prompt/schema version, model, and image-detail setting. A SQLite ledger atomically reserves estimated cost before a call, enforces the aggregate and per-project limits, records actual token usage, and bypasses spend for cache hits. Images are capped in size/count and use low detail by default; floor-plan reading uses high detail because dimension labels are small print.
 
 ## Demo walkthrough
 

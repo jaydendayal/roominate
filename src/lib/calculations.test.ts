@@ -85,6 +85,37 @@ describe("Roominate deterministic engines", () => {
     expect(settledElevation(project, at(dresserTop), { x: 1.6, y: 0.3 })).toBeCloseTo(dresserTop);
   });
 
+  it("keeps horizontal moves under a lofted bed instead of auto-stacking onto it", () => {
+    const project = createDemoProject();
+    const bed = item(project, "item-room-bed");
+    const fridge = item(project, "item-fridge");
+    bed.transform = { position: { x: 1.8, y: 1.5 }, rotationZ: 0, elevation: 1 };
+    fridge.transform = { position: { x: 0.3, y: 0.3 }, rotationZ: 0, elevation: 0 };
+    project.items = [bed, fridge];
+    project.products = project.products.map((product) => product.id === fridge.productId
+      ? { ...product, dimensions: { ...product.dimensions, height: 1.1 } }
+      : product);
+
+    const underBed = bed.transform.position;
+    const elevation = settledElevation(project, fridge, underBed);
+    const moved = { ...fridge, transform: { ...fridge.transform, position: underBed, elevation } };
+
+    expect(elevation).toBe(0);
+    expect(collidingItemIds(project, moved)).toContain(bed.id);
+  });
+
+  it("keeps an item deliberately resting on a lofted bed on that surface", () => {
+    const project = createDemoProject();
+    const bed = item(project, "item-room-bed");
+    const fridge = item(project, "item-fridge");
+    bed.transform = { position: { x: 1.8, y: 1.5 }, rotationZ: 0, elevation: 1 };
+    const bedTop = 1 + heightOf(project, bed.id);
+    fridge.transform = { position: bed.transform.position, rotationZ: 0, elevation: bedTop };
+    project.items = [bed, fridge];
+
+    expect(settledElevation(project, fridge, { x: 1.82, y: 1.5 })).toBeCloseTo(bedTop);
+  });
+
   it("flags items sinking through the floor or lifted through the ceiling", () => {
     const project = createDemoProject();
     project.items = project.items.map((candidate) => candidate.id === "item-fridge" ? { ...candidate, transform: { ...candidate.transform!, elevation: -0.1 } } : candidate.id === "item-pouf" ? { ...candidate, transform: { ...candidate.transform!, elevation: 2.2 } } : candidate);

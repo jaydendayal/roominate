@@ -200,8 +200,22 @@ export function settledElevation(project: Project, item: Item, position: Vec2) {
   const moved: Item = { ...item, transform: { ...item.transform, position } };
   const stillOverlapping = new Set(collidingItemIds(project, moved, true));
   const ignored = new Set(collidingItemIds(project, item).filter((id) => stillOverlapping.has(id)));
+  // A raised bed is an under-bed zone, not an automatic stacking surface. Floor furniture that is
+  // too tall stays on the floor and reports a collision instead of unexpectedly jumping onto the
+  // mattress. An item that was deliberately placed on the bed remains supported while it moves.
+  const currentElevation = itemElevation(item);
+  const supportingIds = new Set(collidingItemIds(project, item, true).filter((id) => {
+    const other = project.items.find((candidate) => candidate.id === id);
+    const otherBox = other ? itemBox(project, other) : null;
+    return otherBox != null && Math.abs(otherBox.top - currentElevation) <= VERTICAL_EPSILON;
+  }));
+  for (const other of project.items) {
+    const product = productFor(project, other);
+    if (product?.category.toLowerCase() === "bed" && itemElevation(other) > VERTICAL_EPSILON && !supportingIds.has(other.id)) ignored.add(other.id);
+  }
   const followsSurface = restsOnSurface(project, item) || leavesSurface(project, item, position, ignored);
-  return stackedElevation(project, moved, followsSurface ? 0 : itemElevation(item), ignored);
+  const remainsOnCurrentSupport = [...supportingIds].some((id) => stillOverlapping.has(id));
+  return stackedElevation(project, moved, remainsOnCurrentSupport ? currentElevation : followsSurface ? 0 : currentElevation, ignored);
 }
 
 function zoneBounds(position: Vec2, width: number, depth: number): Bounds {

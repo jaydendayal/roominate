@@ -29,6 +29,7 @@ class Settings:
     max_estimated_call_usd: float
     input_cost_per_million: float
     output_cost_per_million: float
+    web_search_cost_usd: float
     database_path: Path
     allowed_origins: tuple[str, ...]
     amazon_credential_id: str | None
@@ -36,20 +37,7 @@ class Settings:
     amazon_credential_version: str
     amazon_partner_tag: str | None
     amazon_marketplace: str
-    visa_r2p_mode: str
-    visa_r2p_base_url: str
-    visa_r2p_username: str | None
-    visa_r2p_password: str | None
-    visa_r2p_client_cert: Path | None
-    visa_r2p_client_key: Path | None
-    visa_r2p_mle_key_id: str | None
-    visa_r2p_mle_server_cert: Path | None
-    visa_r2p_mle_private_key: Path | None
-    visa_r2p_creditor_agent_id: str | None
-    visa_r2p_debtor_agent_id: str | None
-    visa_r2p_settlement_pan: str | None
-    visa_r2p_simulator_scenario: str
-    visa_r2p_country: str
+    dorm_browser_fallback_enabled: bool
 
 
 def get_settings() -> Settings:
@@ -67,6 +55,7 @@ def get_settings() -> Settings:
         # Override these whenever OPENAI_MODEL changes.
         input_cost_per_million=max(0.0, _float("OPENAI_INPUT_COST_PER_1M", 0.40)),
         output_cost_per_million=max(0.0, _float("OPENAI_OUTPUT_COST_PER_1M", 1.60)),
+        web_search_cost_usd=max(0.0, _float("OPENAI_WEB_SEARCH_COST_USD", 0.01)),
         database_path=Path(os.getenv("ROOMINATE_AI_DB", str(backend_root / "data" / "ai_cache.sqlite"))),
         allowed_origins=tuple(origin.strip() for origin in raw_origins.split(",") if origin.strip()),
         amazon_credential_id=os.getenv("AMAZON_CREATORS_CREDENTIAL_ID") or None,
@@ -74,18 +63,5 @@ def get_settings() -> Settings:
         amazon_credential_version=os.getenv("AMAZON_CREATORS_CREDENTIAL_VERSION", "3.1"),
         amazon_partner_tag=os.getenv("AMAZON_ASSOCIATE_PARTNER_TAG") or None,
         amazon_marketplace=os.getenv("AMAZON_MARKETPLACE", "www.amazon.com"),
-        visa_r2p_mode=os.getenv("VISA_R2P_MODE", "demo").lower(),
-        visa_r2p_base_url=os.getenv("VISA_R2P_BASE_URL", "https://sandbox.api.visa.com").rstrip("/"),
-        visa_r2p_username=os.getenv("VISA_R2P_USERNAME") or None,
-        visa_r2p_password=os.getenv("VISA_R2P_PASSWORD") or None,
-        visa_r2p_client_cert=Path(value) if (value := os.getenv("VISA_R2P_CLIENT_CERT")) else None,
-        visa_r2p_client_key=Path(value) if (value := os.getenv("VISA_R2P_CLIENT_KEY")) else None,
-        visa_r2p_mle_key_id=os.getenv("VISA_R2P_MLE_KEY_ID") or None,
-        visa_r2p_mle_server_cert=Path(value) if (value := os.getenv("VISA_R2P_MLE_SERVER_CERT")) else None,
-        visa_r2p_mle_private_key=Path(value) if (value := os.getenv("VISA_R2P_MLE_PRIVATE_KEY")) else None,
-        visa_r2p_creditor_agent_id=os.getenv("VISA_R2P_CREDITOR_AGENT_ID") or None,
-        visa_r2p_debtor_agent_id=os.getenv("VISA_R2P_DEBTOR_AGENT_ID") or None,
-        visa_r2p_settlement_pan=os.getenv("VISA_R2P_SETTLEMENT_PAN") or None,
-        visa_r2p_simulator_scenario=os.getenv("VISA_R2P_SIMULATOR_SCENARIO", "X_2_X_X"),
-        visa_r2p_country=os.getenv("VISA_R2P_COUNTRY", "US").upper(),
+        dorm_browser_fallback_enabled=os.getenv("DORM_BROWSER_FALLBACK_ENABLED", "true").lower() in {"1", "true", "yes"},
     )

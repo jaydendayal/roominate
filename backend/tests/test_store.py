@@ -35,7 +35,7 @@ def test_invite_accept_and_revision_conflict(tmp_path: Path) -> None:
         "name": "Shared dorm",
         "ownerId": "person-owner",
         "people": [{"id": "person-owner", "name": "Owner", "color": "#527D68"}],
-        "room": {"mediaAssets": []},
+        "room": {},
         "products": [],
         "items": [],
     }
@@ -63,7 +63,7 @@ def test_invite_reuses_a_known_roommate_identity(tmp_path: Path) -> None:
             {"id": "person-owner", "name": "Owner", "color": "#527D68"},
             {"id": "person-maya", "name": "Maya", "color": "#D66A4A"},
         ],
-        "room": {"mediaAssets": []},
+        "room": {},
         "products": [],
         "items": [],
     }
